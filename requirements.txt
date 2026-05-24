@@ -1,0 +1,2 @@
+requests
+static-ffmpeg

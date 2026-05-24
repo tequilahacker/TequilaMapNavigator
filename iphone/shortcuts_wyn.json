@@ -1,0 +1,90 @@
+{
+  "shortcut_name": "VMN_Compact_Motorcycle_Navigator",
+  "trigger": "Siri Voice Command or Automation when connecting to BLE Device 'VMN-Compact'",
+  "actions": [
+    {
+      "step": 1,
+      "action_type": "Speak Text",
+      "parameters": {
+        "text": "Bạn muốn đi đâu?",
+        "voice": "Vietnamese (Female)",
+        "wait_for_completion": true
+      }
+    },
+    {
+      "step": 2,
+      "action_type": "Dictate Text",
+      "parameters": {
+        "language": "vi-VN",
+        "stop_listening": "On Tap"
+      },
+      "output_name": "destination_voice_text"
+    },
+    {
+      "step": 3,
+      "action_type": "Get Current Location",
+      "parameters": {
+        "accuracy": "Best"
+      },
+      "output_name": "current_gps_location"
+    },
+    {
+      "step": 4,
+      "action_type": "Get Text from Input",
+      "parameters": {
+        "input": "https://maps.googleapis.com/maps/api/directions/json?origin=[current_gps_location.latitude],[current_gps_location.longitude]&destination=[destination_voice_text]&mode=two_wheeler&key=YOUR_GOOGLE_MAPS_API_KEY"
+      },
+      "output_name": "api_url"
+    },
+    {
+      "step": 5,
+      "action_type": "Get Contents of URL",
+      "parameters": {
+        "url": "[api_url]",
+        "method": "GET"
+      },
+      "output_name": "google_maps_json"
+    },
+    {
+      "step": 6,
+      "action_type": "Get Dictionary Value",
+      "parameters": {
+        "key": "routes.0.legs.0.steps",
+        "dictionary": "[google_maps_json]"
+      },
+      "output_name": "route_steps"
+    },
+    {
+      "step": 7,
+      "action_type": "Get File from Folder",
+      "parameters": {
+        "folder": "Shortcuts",
+        "file_path": "camera_phat_nguoi.csv"
+      },
+      "output_name": "csv_file"
+    },
+    {
+      "step": 8,
+      "action_type": "Run Scriptable Script",
+      "parameters": {
+        "script_name": "ble_helper_ios",
+        "arguments": {
+          "current_lat": "[current_gps_location.latitude]",
+          "current_lon": "[current_gps_location.longitude]",
+          "destination": "[destination_voice_text]",
+          "route_steps": "[route_steps]",
+          "camera_csv": "[csv_file]"
+        }
+      },
+      "output_name": "scriptable_result"
+    },
+    {
+      "step": 9,
+      "action_type": "Show Alert",
+      "parameters": {
+        "title": "WYN Navigator",
+        "message": "Dẫn đường đang chạy ẩn qua BLE. Chúc bạn thượng lộ bình an!"
+      }
+    }
+  ]
+}

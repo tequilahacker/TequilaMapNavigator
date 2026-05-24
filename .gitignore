@@ -1,0 +1,9 @@
+venv/
+__pycache__/
+*.pyc
+journey_state.json
+*.log
+.DS_Store
+incoming_audio.wav
+temp_tts.mp3
+temp_tts.pcm

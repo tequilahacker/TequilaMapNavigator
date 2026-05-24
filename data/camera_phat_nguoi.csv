@@ -1,0 +1,21 @@
+latitude,longitude,camera_type,description,speed_limit
+10.7769,106.7009,speed,Camera tốc độ đường Nguyễn Huệ,40
+10.7745,106.6963,red_light,Camera đèn đỏ ngã tư Lê Lợi - Nam Kỳ Khởi Nghĩa,40
+10.7801,106.6985,speed,Camera tốc độ đường Đinh Tiên Hoàng,60
+10.7825,106.7041,speed,Camera tốc độ đường Điện Biên Phủ,60
+10.7750,106.7100,red_light,Camera đèn đỏ ngã tư Điện Biên Phủ - Nguyễn Bỉnh Khiêm,40
+10.7900,106.6900,speed,Camera tốc độ xa lộ Hà Nội đoạn Q.Bình Thạnh,80
+10.7950,106.7150,speed,Camera tốc độ đường Nguyễn Xí,60
+10.7700,106.6800,speed,Camera tốc độ đường Hoàng Diệu,60
+10.8000,106.7200,red_light,Camera đèn đỏ Hàng Xanh,40
+10.7600,106.6900,speed,Camera tốc độ đường Nguyễn Tất Thành,60
+10.7850,106.6850,speed,Camera tốc độ cầu Sài Gòn (lên cầu),80
+10.7860,106.6860,speed,Camera tốc độ cầu Sài Gòn (xuống cầu),80
+10.7500,106.6750,speed,Camera tốc độ đường Nguyễn Văn Linh giao lộ Q.8,80
+10.7550,106.6950,red_light,Camera đèn đỏ Phạm Hùng,40
+10.7450,106.6850,speed,Camera tốc độ đường Nguyễn Thị Thập,60
+10.8100,106.7300,speed,Camera tốc độ QL1A đoạn Q.Gò Vấp,80
+10.8050,106.6950,speed,Camera tốc độ Phan Văn Trị,50
+10.7680,106.7250,speed,Camera tốc độ Mai Chí Thọ,80
+10.7720,106.7280,speed,Camera tốc độ Đồng Văn Cống,80
+10.7780,106.6750,speed,Camera tốc độ đường Trường Chinh,60
