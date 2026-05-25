@@ -1371,42 +1371,45 @@ class NavigatorWebServer:
 
     def _transcribe_audio(self, pcm_data):
         """Chuyển đổi luồng âm thanh PCM 16kHz thô từ Mic ESP32 thành văn bản tiếng Việt."""
-        import struct
-        sample_rate = 16000
-        bits = 16
-        channels = 1
-        
-        # Tạo WAV Header 44 bytes để hợp lệ hóa file WAV thô
-        header = struct.pack('<4sI4s4sIHHIIHH4sI',
-            b'RIFF',
-            len(pcm_data) + 36,
-            b'WAVE',
-            b'fmt ',
-            16, 1, channels,
-            sample_rate,
-            sample_rate * channels * bits // 8,
-            channels * bits // 8,
-            bits,
-            b'data',
-            len(pcm_data)
-        )
-        wav_data = header + pcm_data
-        
-        # Gọi cổng nhận dạng giọng nói miễn phí của Google
-        url = "https://www.google.com/speech-api/v1/recognize?client=chromium&lang=vi-VN"
-        headers = {"Content-Type": "audio/x-wav; rate=16000"}
         try:
-            print(f"[STT] Đang dịch {len(pcm_data)} bytes âm thanh...")
-            r = requests.post(url, data=wav_data, headers=headers, timeout=8)
-            lines = r.text.strip().split("\n")
-            for line in lines:
-                data = json.loads(line)
-                if "hypotheses" in data and data["hypotheses"]:
-                    text = data["hypotheses"][0]["utterance"]
-                    print(f"[STT] Kết quả dịch giọng nói: '{text}'")
-                    return text
+            import speech_recognition as sr
+            import io
+            import struct
+            
+            sample_rate = 16000
+            bits = 16
+            channels = 1
+            
+            header = struct.pack('<4sI4s4sIHHIIHH4sI',
+                b'RIFF',
+                len(pcm_data) + 36,
+                b'WAVE',
+                b'fmt ',
+                16, 1, channels,
+                sample_rate,
+                sample_rate * channels * bits // 8,
+                channels * bits // 8,
+                bits,
+                b'data',
+                len(pcm_data)
+            )
+            wav_data = header + pcm_data
+            
+            r = sr.Recognizer()
+            audio_file = io.BytesIO(wav_data)
+            with sr.AudioFile(audio_file) as source:
+                audio = r.record(source)
+                
+            print(f"[STT] Đang dịch {len(pcm_data)} bytes âm thanh bằng SpeechRecognition...")
+            text = r.recognize_google(audio, language="vi-VN")
+            print(f"[STT] Kết quả dịch giọng nói: '{text}'")
+            return text
+        except sr.UnknownValueError:
+            print("[STT] Google Speech Recognition không hiểu được âm thanh.")
+        except sr.RequestError as e:
+            print(f"[STT] ❌ Lỗi kết nối Google Speech API; {e}")
         except Exception as e:
-            print("[STT] ❌ Lỗi nhận diện giọng nói tiếng Việt:", e)
+            print("[STT] ❌ Lỗi nhận diện giọng nói:", e)
         return None
 
     def _send_text_to_esp32(self, text):
@@ -1493,6 +1496,21 @@ class NavigatorWebServer:
                     self.send_header('Access-Control-Allow-Origin', '*')
                     self.end_headers()
                     self.wfile.write(b'{"status":"ok","source":"shortcut"}')
+
+                elif self.path == '/api/test-ffmpeg':
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/plain; charset=utf-8')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    try:
+                        import static_ffmpeg
+                        static_ffmpeg.add_paths()
+                        import subprocess
+                        res = subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                        output = f"FFmpeg version output:\n{res.stdout}\nError (if any):\n{res.stderr}"
+                    except Exception as e:
+                        output = f"Exception when running ffmpeg:\n{e}"
+                    self.wfile.write(output.encode('utf-8'))
 
                 elif self.path == '/api/status':
                     # Lấy GPS real-time cập nhật vào status
@@ -1642,9 +1660,15 @@ class NavigatorWebServer:
                                     destination = reply.replace("NAV:", "").strip()
                                     server_self._trigger_routes_search(destination, [])
                                 else:
-                                    server_self.update_status(voice_reply=reply)
-                                    server_self.trigger_voice_alert(reply)
-                                    server_self._send_text_to_esp32(reply)
+                                    is_error_reply = any(w in reply for w in ["Vui lòng", "API", "leaked", "kết nối", "khó khăn"])
+                                    conversational_keywords = ["chào", "hello", "bạn là", "thời tiết", "kể chuyện", "tâm sự", "tính toán", "mấy giờ"]
+                                    if is_error_reply and not any(kw in text_lower for kw in conversational_keywords):
+                                        print(f"[Fallback] Lỗi Gemini, tự động chuyển hướng tìm kiếm địa điểm: '{text}'")
+                                        server_self._trigger_routes_search(text, [])
+                                    else:
+                                        server_self.update_status(voice_reply=reply)
+                                        server_self.trigger_voice_alert(reply)
+                                        server_self._send_text_to_esp32(reply)
                                 
                         threading.Thread(target=process_text, daemon=True).start()
                         self.send_json({"status": "ok"})
@@ -1722,20 +1746,26 @@ class NavigatorWebServer:
                                         destination = reply.replace("NAV:", "").strip()
                                         server_self._trigger_routes_search(destination, [])
                                     else:
-                                        # Phát câu trả lời của AI vào tai nghe nón bảo hiểm Bluetooth (nếu có Pythonista)
-                                        try:
-                                            speech.say(reply, "vi-VN")
-                                        except Exception:
-                                            pass
-                                        
-                                        # Cập nhật voice_reply lên status để Safari Dashboard phát âm thanh TTS
-                                        server_self.update_status(voice_reply=reply)
-                                        
-                                        # Đồng bộ chữ & phát âm thanh sinh ra lên loa xe máy qua Cloud Polling
-                                        server_self.trigger_voice_alert(reply)
-                                        
-                                        # Đẩy chữ phản hồi của AI hiển thị lên màn hình ESP32 local
-                                        server_self._send_text_to_esp32(reply)
+                                        is_error_reply = any(w in reply for w in ["Vui lòng", "API", "leaked", "kết nối", "khó khăn"])
+                                        conversational_keywords = ["chào", "hello", "bạn là", "thời tiết", "kể chuyện", "tâm sự", "tính toán", "mấy giờ"]
+                                        if is_error_reply and not any(kw in text_lower for kw in conversational_keywords):
+                                            print(f"[Fallback] Lỗi Gemini, tự động chuyển hướng tìm kiếm địa điểm: '{text}'")
+                                            server_self._trigger_routes_search(text, [])
+                                        else:
+                                            # Phát câu trả lời của AI vào tai nghe nón bảo hiểm Bluetooth (nếu có Pythonista)
+                                            try:
+                                                speech.say(reply, "vi-VN")
+                                            except Exception:
+                                                pass
+                                            
+                                            # Cập nhật voice_reply lên status để Safari Dashboard phát âm thanh TTS
+                                            server_self.update_status(voice_reply=reply)
+                                            
+                                            # Đồng bộ chữ & phát âm thanh sinh ra lên loa xe máy qua Cloud Polling
+                                            server_self.trigger_voice_alert(reply)
+                                            
+                                            # Đẩy chữ phản hồi của AI hiển thị lên màn hình ESP32 local
+                                            server_self._send_text_to_esp32(reply)
                             except Exception as e:
                                 print("[Voice Engine] Lỗi xử lý âm thanh:", e)
                                 

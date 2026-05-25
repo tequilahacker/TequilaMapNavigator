@@ -4,3 +4,4 @@ gunicorn
 flask
 cryptography
 findmy
+SpeechRecognition
