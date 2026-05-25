@@ -276,6 +276,17 @@ HTML_PAGE = """<!DOCTYPE html>
 <script src="/leaflet.js"></script>
 </head>
 <body>
+<div id="debug-log" style="background:rgba(255,0,0,0.12);color:#ff3366;font-family:monospace;font-size:12px;padding:12px;margin:12px;border:1.5px solid #ff3366;border-radius:12px;display:none;white-space:pre-wrap;word-break:break-all;position:relative;z-index:99999;"></div>
+<script>
+  window.onerror = function(msg, url, line, col, error) {
+    const log = document.getElementById('debug-log');
+    if (log) {
+      log.style.display = 'block';
+      log.textContent += `⚠️ Lỗi JS: ${msg} (Dòng: ${line}, Cột: ${col})\n`;
+    }
+    return false;
+  };
+</script>
 
 <header>
   <h1>🏍️ TEQUILA NAVIGATOR</h1>
