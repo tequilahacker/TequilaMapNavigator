@@ -8,14 +8,21 @@ import threading
 import os
 import subprocess
 import struct
+import sys
 
 # ═══════════════════════════════════════════════════
-# CẤU HÌNH KẾT NỐI (Chỉnh sang URL Render của bạn nếu test Cloud)
+# CẤU HÌNH KẾT NỐI (Mặc định dùng Render Cloud của bạn)
 # ═══════════════════════════════════════════════════
-SERVER_HOST = "localhost"  # Hoặc tên miền Render của bạn (VD: "tequila-navigator.onrender.com")
-SERVER_PORT = 8080         # Cổng local là 8080. Cổng Cloud Render là 443
-USE_SSL     = False        # Đổi thành True nếu dùng Render (HTTPS)
-POLL_INTERVAL = 1.5        # Poll dữ liệu mỗi 1.5 giây
+SERVER_HOST = "tequilamap.onrender.com"
+SERVER_PORT = 443
+USE_SSL     = True
+POLL_INTERVAL = 1.5
+
+# Chuyển sang chạy local nếu chạy lệnh: python3 mock_esp32.py local
+if len(sys.argv) > 1 and sys.argv[1].lower() == "local":
+    SERVER_HOST = "localhost"
+    SERVER_PORT = 8080
+    USE_SSL     = False
 
 # Trạng thái giả lập HUD
 current_hud = {
@@ -113,7 +120,8 @@ def fetch_audio_from_server():
         s.connect(addr)
         if USE_SSL:
             import ssl
-            s = ssl.wrap_socket(s, server_hostname=SERVER_HOST)
+            context = ssl.create_default_context()
+            s = context.wrap_socket(s, server_hostname=SERVER_HOST)
             
         request = (
             f"GET /api/get-audio HTTP/1.1\r\n"
@@ -155,7 +163,8 @@ def polling_loop():
             s.connect(addr)
             if USE_SSL:
                 import ssl
-                s = ssl.wrap_socket(s, server_hostname=SERVER_HOST)
+                context = ssl.create_default_context()
+                s = context.wrap_socket(s, server_hostname=SERVER_HOST)
                 
             request = (
                 f"GET /api/poll-device HTTP/1.1\r\n"
@@ -241,7 +250,8 @@ def simulate_mic_input(user_command_text):
         s.connect(addr)
         if USE_SSL:
             import ssl
-            s = ssl.wrap_socket(s, server_hostname=SERVER_HOST)
+            context = ssl.create_default_context()
+            s = context.wrap_socket(s, server_hostname=SERVER_HOST)
             
         payload = json.dumps({"text": user_command_text, "esp32_ip": "localhost"}).encode()
         request = (
