@@ -292,10 +292,20 @@ HTML_PAGE = """<!DOCTYPE html>
     <span class="dot" id="gps-dot" style="background:#888;"></span>
     <span id="gps-status">📍 GPS: Đang định vị...</span>
   </div>
-  <div class="status-item" style="cursor:pointer;" onclick="toggleFindMyPanel()" title="Kết nối Apple Find My">
-    <span id="findmy-dot" style="width:8px;height:8px;border-radius:50%;display:inline-block;background:#555;margin-right:5px;"></span>
+  <div class="status-item">
+    <span id="findmy-dot" style="width:8px;height:8px;border-radius:50%;display:inline-block;background:#555;margin-right:4px;"></span>
     <span id="findmy-status" style="font-size:11px;color:#aaa;">🍎 Find My</span>
   </div>
+</div>
+
+<!-- Nut setup Find My (noi bat, de bam tren mobile) -->
+<div id="findmy-btn-bar" style="padding:6px 16px 0 16px;">
+  <button onclick="toggleFindMyPanel()" id="findmy-main-btn"
+    style="width:100%;padding:10px;background:linear-gradient(135deg,#1a1a3e,#2a2a5e);
+           border:1.5px solid #4a90d9;border-radius:10px;color:#4a90d9;
+           font-size:13px;font-weight:600;cursor:pointer;letter-spacing:0.5px;">
+    🍎 Kết nối Apple Find My (Bấm để setup)
+  </button>
 </div>
 
 <!-- Map: Always Visible -->
@@ -427,6 +437,13 @@ async function setupFindMy() {
       msg.textContent = '✅ Đăng nhập thành công! GPS tự động từ Find My.';
       document.getElementById('findmy-dot').style.background = '#00ff87';
       document.getElementById('findmy-status').textContent = '🍎 Find My ✅';
+      const mainBtn = document.getElementById('findmy-main-btn');
+      if (mainBtn) {
+        mainBtn.textContent = '🍎 Find My ✅ Đang hoạt động';
+        mainBtn.style.borderColor = '#00ff87';
+        mainBtn.style.color = '#00ff87';
+        mainBtn.style.background = 'linear-gradient(135deg,#0a2a1a,#0a3a2a)';
+      }
     } else {
       msg.style.color = '#ff4444';
       msg.textContent = '❌ ' + (d.message || d.error || JSON.stringify(d));
@@ -452,6 +469,13 @@ async function submit2FA() {
       msg.textContent = '✅ 2FA thành công! Find My đang chạy.';
       document.getElementById('findmy-dot').style.background = '#00ff87';
       document.getElementById('findmy-status').textContent = '🍎 Find My ✅';
+      const mainBtn2 = document.getElementById('findmy-main-btn');
+      if (mainBtn2) {
+        mainBtn2.textContent = '🍎 Find My ✅ Đang hoạt động';
+        mainBtn2.style.borderColor = '#00ff87';
+        mainBtn2.style.color = '#00ff87';
+        mainBtn2.style.background = 'linear-gradient(135deg,#0a2a1a,#0a3a2a)';
+      }
       document.getElementById('findmy-2fa-area').style.display = 'none';
       setTimeout(()=>{ document.getElementById('findmy-panel').style.display='none'; }, 3000);
     } else {
