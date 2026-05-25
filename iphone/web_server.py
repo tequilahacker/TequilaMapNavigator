@@ -605,13 +605,16 @@ function updateUI(d) {
   }
   
   if (d.gps_lat) {
-    document.getElementById('gps-status').textContent = `📍 GPS: ${d.gps_lat.toFixed(5)}, ${d.gps_lon.toFixed(5)}`;
+    const lat = typeof d.gps_lat === 'string' ? parseFloat(d.gps_lat) : d.gps_lat;
+    const lon = typeof d.gps_lon === 'string' ? parseFloat(d.gps_lon) : d.gps_lon;
+    document.getElementById('gps-status').textContent = `📍 GPS: ${lat.toFixed(5)}, ${lon.toFixed(5)}`;
     if (map && carMarker) {
-      const pos = [d.gps_lat, d.gps_lon];
+      const pos = [lat, lon];
       carMarker.setLatLng(pos);
-      // Chỉ zoom pan khi đang dẫn đường active
-      if (d.is_navigating) {
-        map.panTo(pos);
+      // Zoom pan khi nhận GPS lần đầu hoặc đang dẫn đường active
+      if (d.is_navigating || !_gpsFirstFix) {
+        map.setView(pos, 15);
+        _gpsFirstFix = true;
       }
     }
   }
