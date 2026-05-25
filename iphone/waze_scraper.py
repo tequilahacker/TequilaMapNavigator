@@ -22,24 +22,37 @@ try:
 except ImportError:
     HAS_URLLIB = False
 
-# Waze Live Map endpoint (không chính thức - cộng đồng)
-WAZE_GEORSS_URL = "https://www.waze.com/live-map/api/georss"
-WAZE_ALERTS_URL = "https://www.waze.com/row-rtserver/web/TGeoRSS"  # Backup endpoint
+# Waze Live Map endpoints (du lieu REAL-TIME nam 2026, cap nhat tung phut)
+# Day la du lieu CONG DONG - nguoi dung bao cao NGAY HOM NAY, khong phai 2015
+WAZE_GEORSS_URL  = "https://www.waze.com/live-map/api/georss"   # Primary
+WAZE_ALERTS_URL  = "https://www.waze.com/row-rtserver/web/TGeoRSS"  # Backup
+WAZE_IFRAME_URL  = "https://www.waze.com/en/livemap/directions"  # Fallback 3
 
-# Waze alert type codes
+# Waze alert type codes (cap nhat 2026 - real-time crowdsourced data)
 WAZE_TYPE_MAP = {
-    "POLICE":     {"type": "police",    "name": "Cảnh sát phía trước", "priority": 1},
-    "ACCIDENT":   {"type": "accident",  "name": "Tai nạn giao thông",  "priority": 2},
-    "JAM":        {"type": "traffic",   "name": "Tắc đường",           "priority": 3},
-    "HAZARD":     {"type": "hazard",    "name": "Nguy hiểm đường",     "priority": 2},
-    "ROAD_CLOSED":{"type": "closed",    "name": "Đường bị chặn",       "priority": 1},
-    "WEATHERHAZARD": {"type": "weather","name": "Thời tiết xấu",       "priority": 3},
+    "POLICE":        {"type": "police",    "name": "Cảnh sát giao thông phía trước", "priority": 1},
+    "ACCIDENT":      {"type": "accident",  "name": "Tai nạn giao thông",              "priority": 1},
+    "JAM":           {"type": "traffic",   "name": "Tắc đường",                       "priority": 3},
+    "HAZARD":        {"type": "hazard",    "name": "Nguy hiểm đường bộ",              "priority": 2},
+    "ROAD_CLOSED":   {"type": "closed",    "name": "Đường bị chặn",                   "priority": 1},
+    "WEATHERHAZARD": {"type": "weather",   "name": "Thời tiết xấu",                   "priority": 3},
+    "CHIT_CHAT":     {"type": "info",      "name": "Thông tin giao thông",             "priority": 5},
 }
 
-# Waze hazard subtypes liên quan đến camera
-CAMERA_SUBTYPES = {
-    "HAZARD_ON_ROAD_TRAFFIC_LIGHT_FAULT",
-    "HAZARD_ON_ROAD_CAR_STOPPED",
+# Waze HAZARD subtypes = camera cong dong bao cao (real-time)
+# Day la camera LUU DONG (canh sat, cam do do den, cam toc do di dong)
+CAMERA_HAZARD_SUBTYPES = {
+    "HAZARD_ON_SHOULDER_CAR_STOPPED",     # Canh sat dung lai
+    "HAZARD_ON_ROAD_POLICE_HIDING",       # Canh sat nup
+    "HAZARD_ON_ROAD_TRAFFIC_LIGHT_FAULT", # Dung do den
+    "HAZARD_ON_ROAD_ROAD_KILL",           # Camera ghi hinh su co
+}
+
+# Police subtypes = confirmed camera/police
+POLICE_SUBTYPES = {
+    "POLICE_VISIBLE",   # Canh sat ro rang
+    "POLICE_HIDING",    # Canh sat nup
+    "SPEED_CAMERA_AHEAD",  # Camera toc do phia truoc
 }
 
 
@@ -220,37 +233,82 @@ class WazeScraper:
             self._announced_ids = set(list(self._announced_ids)[-50:])
 
     def build_alert_text(self, alert):
-        """Tạo text cảnh báo tiếng Việt cho Waze alert."""
-        name = alert["name"]
-        dist = alert["distance_m"]
-        street = alert.get("street", "")
-
-        if dist <= 50:
-            dist_text = "ngay phía trước"
-        elif dist <= 200:
-            dist_text = f"{dist} mét"
-        else:
-            dist_text = f"{dist} mét"
-
-        text = f"{name} {dist_text}."
-        if street:
-            text += f" Đường {street}."
-
-        # Thêm khuyến nghị theo loại
+        """Tao text canh bao tieng Viet dung spec Tequila Map.
+        
+        Spec:
+        - Camera < 50m: "Phia truoc 50 met co camera phat nguoi"
+        - Canh sat < 200m: "Phia truoc co canh sat kiem tra toc do"
+        - Tai nan < 300m: "Phia truoc co tai nan giao thong, di cham lai"
+        - Tac duong: "Phia truoc tac duong, co the tim duong vong"
+        """
         raw_type = alert.get("raw_type", "")
+        subtype  = alert.get("subtype", "")
+        dist     = int(alert["distance_m"])
+        street   = alert.get("street", "")
+
+        # Format khoang cach
+        if dist <= 30:
+            dist_str = "ngay phia truoc"
+        elif dist <= 100:
+            dist_str = f"phia truoc {dist} met"
+        else:
+            dist_str = f"phia truoc {dist} met"
+
+        street_str = f" tren duong {street}" if street else ""
+
+        # ── Camera / Canh sat (uu tien cao nhat) ──
         if raw_type == "POLICE":
-            text += " Chú ý giảm tốc độ!"
+            if dist <= 200:
+                text = f"Canh bao! {dist_str} co canh sat kiem tra toc do{street_str}. Giam toc do ngay!"
+            else:
+                text = f"{dist_str} co canh sat giao thong{street_str}. Chu y toc do."
+        elif raw_type == "HAZARD" and subtype in CAMERA_HAZARD_SUBTYPES:
+            text = f"Canh bao! {dist_str} co camera luu dong{street_str}. Giam toc do!"
+        # ── Camera toc do co dinh ──
+        elif raw_type == "HAZARD" and "SPEED" in subtype.upper():
+            text = f"Phia truoc {dist} met co camera phat nguoi. Chay dung toc do quy dinh."
+        # ── Tai nan ──
         elif raw_type == "ACCIDENT":
-            text += " Chú ý an toàn, đi chậm lại."
+            text = f"Canh bao tai nan giao thong {dist_str}{street_str}. Di cham lai, chu y an toan."
+        # ── Tac duong ──
         elif raw_type == "JAM":
-            text += " Có thể tìm đường vòng."
+            text = f"{dist_str} tac duong{street_str}. Co the tim duong vong."
+        # ── Duong bi chan ──
+        elif raw_type == "ROAD_CLOSED":
+            text = f"Canh bao! {dist_str} duong bi chan{street_str}. Can tim duong khac."
+        # ── Nguy hiem khac ──
+        elif raw_type == "HAZARD":
+            text = f"Chu y! {dist_str} co nguy hiem tren duong{street_str}."
+        else:
+            text = f"{alert['name']} {dist_str}."
 
         return text
 
     def get_police_alerts(self, lat, lon, radius_km=2):
-        """Chỉ lấy cảnh báo cảnh sát (camera lưu động)."""
+        """Chi lay canh bao canh sat (camera luu dong)."""
         all_alerts = self.fetch_alerts(lat, lon, radius_km)
         return [a for a in all_alerts if a["raw_type"] == "POLICE"]
+
+    def get_camera_alerts(self, lat, lon, radius_km=0.5):
+        """Lay TAT CA canh bao camera (co dinh + luu dong) trong ban kinh nho.
+        
+        Bao gom:
+        - POLICE: canh sat ro rang hoac nup
+        - HAZARD voi subtype camera: camera luu dong cong dong bao cao
+        """
+        all_alerts = self.fetch_alerts(lat, lon, radius_km)
+        cameras = []
+        for a in all_alerts:
+            if a["raw_type"] == "POLICE":
+                cameras.append(a)
+            elif a["raw_type"] == "HAZARD" and a.get("subtype","") in CAMERA_HAZARD_SUBTYPES:
+                cameras.append(a)
+        return cameras
+
+    def get_high_priority_alerts(self, lat, lon, radius_km=1):
+        """Lay canh bao uu tien cao (camera + canh sat + tai nan)."""
+        all_alerts = self.fetch_alerts(lat, lon, radius_km)
+        return [a for a in all_alerts if a["raw_type"] in ("POLICE", "ACCIDENT", "ROAD_CLOSED")]
 
     def get_traffic_summary(self, alerts):
         """Tóm tắt tình trạng giao thông xung quanh."""

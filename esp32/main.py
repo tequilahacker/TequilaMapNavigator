@@ -280,6 +280,23 @@ def main():
     print("[Boot] Khởi tạo LVGL map display...")
     map_display = MapDisplay(display_drv, touch)
 
+    # ── OpenHaystack BLE (phat beacon de iPhone track qua Find My) ──
+    haystack = None
+    if getattr(config, 'FINDMY_BLE_ENABLED', False):
+        print("[Boot] Khoi dong OpenHaystack BLE advertising...")
+        try:
+            from ble_haystack import HaystackAdvertiser
+            key = getattr(config, 'FINDMY_PUBLIC_KEY', None)
+            haystack = HaystackAdvertiser(public_key_bytes=key)
+            ok = haystack.start()
+            if ok:
+                print("[Boot] BLE Haystack OK - Thiet bi xuat hien trong app Tim!")
+            else:
+                print("[Boot] BLE Haystack khoi dong that bai.")
+        except Exception as e:
+            print("[Boot] Loi BLE Haystack:", e)
+            haystack = None
+
     print("[Boot] Khởi tạo WiFi HTTP/Cloud Server...")
     wifi_server = WiFiHTTPServer()
     wifi_ok = wifi_server.connect_wifi()

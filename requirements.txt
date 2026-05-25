@@ -2,3 +2,5 @@ requests
 static-ffmpeg
 gunicorn
 flask
+cryptography
+findmy

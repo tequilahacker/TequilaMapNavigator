@@ -426,22 +426,57 @@ async function fetchStatus() {
   } catch(e){}
 }
 
-// Báo GPS từ trình duyệt Safari iOS
+// ── GPS Safari iPhone → Cloud server (fix: auto-zoom, instant fix, dot indicator) ──
+let _gpsFirstFix = false;
+let _lastGpsSend = 0;
+
+function _sendGpsToServer(lat, lon, speed, heading, accuracy) {
+  const now = Date.now();
+  if (now - _lastGpsSend < 1800) return;
+  _lastGpsSend = now;
+  fetch('/api/update-gps', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ lat, lon, speed, heading, accuracy })
+  }).then(r => {
+    if (r.ok) {
+      const dot = document.getElementById('gps-dot');
+      if (dot) dot.style.background = '#00ff87';
+      document.getElementById('gps-status').textContent =
+        `📍 GPS: ${lat.toFixed(5)}, ${lon.toFixed(5)} (±${Math.round(accuracy||0)}m)`;
+    }
+  }).catch(() => {
+    const dot = document.getElementById('gps-dot');
+    if (dot) dot.style.background = '#ff4444';
+  });
+  if (map && carMarker) {
+    carMarker.setLatLng([lat, lon]);
+    if (!_gpsFirstFix) {
+      map.setView([lat, lon], 16);
+      _gpsFirstFix = true;
+    }
+  }
+}
+
 if (navigator.geolocation) {
-  navigator.geolocation.watchPosition((position) => {
-    let lat = position.coords.latitude;
-    let lon = position.coords.longitude;
-    let speed = position.coords.speed ? (position.coords.speed * 3.6) : 0;
-    let heading = position.coords.heading || 0;
-    
-    document.getElementById('gps-status').textContent = `📍 GPS: ${lat.toFixed(5)}, ${lon.toFixed(5)}`;
-    
-    fetch('/api/update-gps', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ lat: lat, lon: lon, speed: speed, heading: heading })
-    }).catch(e => {});
-  }, (err) => {}, { enableHighAccuracy: true, maximumAge: 1000, timeout: 8000 });
+  const gpsOpts = { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 };
+  navigator.geolocation.watchPosition(pos => {
+    const { latitude: lat, longitude: lon, speed, heading, accuracy } = pos.coords;
+    _sendGpsToServer(lat, lon, speed ? speed * 3.6 : 0, heading || 0, accuracy || 0);
+  }, err => {
+    let msg = '❌ GPS: ';
+    if (err.code === 1) msg += 'Bị từ chối quyền vị trí — vào Settings > Safari > Vị trí > Cho phép';
+    else if (err.code === 2) msg += 'Không lấy được tín hiệu GPS';
+    else msg += 'Hết thời gian chờ GPS';
+    document.getElementById('gps-status').textContent = msg;
+  }, gpsOpts);
+  // Lấy vị trí ngay lập tức không chờ watchPosition
+  navigator.geolocation.getCurrentPosition(pos => {
+    const { latitude: lat, longitude: lon, speed, heading, accuracy } = pos.coords;
+    _sendGpsToServer(lat, lon, speed ? speed * 3.6 : 0, heading || 0, accuracy || 0);
+  }, () => {}, gpsOpts);
+} else {
+  document.getElementById('gps-status').textContent = '❌ Trình duyệt không hỗ trợ GPS';
 }
 
 function clearPreviewPolylines() {
@@ -768,6 +803,27 @@ class NavigatorWebServer:
         self.tts_audio_buffer = None
         self._server = None
         self._thread = None
+
+        # FindMy Reader - doc GPS tu Apple Find My
+        try:
+            from findmy_reader import FindMyReader
+            def _fm_cb(lat, lon, acc, ts):
+                self.update_status(gps_lat=lat, gps_lon=lon, wifi_connected=True)
+                print(f'[FindMy] GPS: {lat:.5f},{lon:.5f}')
+            self.findmy_reader = FindMyReader(update_callback=_fm_cb)
+            if self.findmy_reader.is_setup:
+                self.findmy_reader.start_background_polling()
+                print('[FindMy] Da kich hoat polling GPS tu Apple Find My.')
+        except Exception as _fm_err:
+            print('[FindMy] Khong tai duoc FindMyReader:', _fm_err)
+            class _NoFindMy:
+                is_setup = False
+                last_location = None
+                def generate_key_pair(self): return {"status":"error","message":"pip install findmy cryptography"}
+                def setup_apple_auth(self, a, p): return {"status":"error","message":"pip install findmy"}
+                def submit_2fa(self, c): return {"status":"error","message":"pip install findmy"}
+                def fetch_location_once(self): return None
+            self.findmy_reader = _NoFindMy()
 
     def _save_journey_state(self, destination, waypoints):
         try:
@@ -1170,11 +1226,23 @@ class NavigatorWebServer:
                         self.send_header('Access-Control-Allow-Origin', '*')
                         self.end_headers()
                         self.wfile.write(server_self.tts_audio_buffer)
-                        server_self.tts_audio_buffer = None # Giải phóng bộ nhớ
+                        server_self.tts_audio_buffer = None
                     else:
                         self.send_response(404)
                         self.send_header('Access-Control-Allow-Origin', '*')
                         self.end_headers()
+                # ── Find My: Tao key pair ──
+                elif self.path == '/api/gen-findmy-key':
+                    result = server_self.findmy_reader.generate_key_pair()
+                    self.send_json(result)
+                # ── Find My: Doc vi tri hien tai ──
+                elif self.path == '/api/findmy-location':
+                    loc = server_self.findmy_reader.last_location
+                    if loc:
+                        self.send_json(loc)
+                    else:
+                        loc_live = server_self.findmy_reader.fetch_location_once()
+                        self.send_json(loc_live or {"error": "Chua co vi tri"})
                 else:
                     self.send_response(404)
                     self.end_headers()
@@ -1444,6 +1512,33 @@ class NavigatorWebServer:
 
                     threading.Thread(target=calc_routes, daemon=True).start()
                     self.send_json({"status": "calculating"})
+
+                # ── FindMy: Dang nhap Apple ID ──
+                elif self.path == '/api/setup-findmy':
+                    apple_id = data.get('apple_id', '')
+                    password = data.get('password', '')
+                    if not apple_id or not password:
+                        self.send_json({"status": "error", "message": "Thieu apple_id hoac password"})
+                        return
+                    import threading
+                    def do_auth():
+                        result = server_self.findmy_reader.setup_apple_auth(apple_id, password)
+                        if result.get("status") == "ok":
+                            server_self.findmy_reader.start_background_polling()
+                        print("[FindMy Setup]", result)
+                    threading.Thread(target=do_auth, daemon=True).start()
+                    self.send_json({"status": "ok", "message": "Dang xu ly xac thuc Apple ID..."})
+
+                # ── FindMy: Nhap ma 2FA ──
+                elif self.path == '/api/findmy-2fa':
+                    code = data.get('code', '').strip()
+                    if not code:
+                        self.send_json({"status": "error", "message": "Thieu ma 2FA"})
+                        return
+                    result = server_self.findmy_reader.submit_2fa(code)
+                    if result.get("status") == "ok":
+                        server_self.findmy_reader.start_background_polling()
+                    self.send_json(result)
 
                 elif self.path == '/api/select-route':
                     # User chọn tuyến đường (index 0/1/2) → bắt đầu dẫn đường

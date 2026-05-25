@@ -10,11 +10,23 @@ HTTP_PORT     = 80                     # Port HTTP server trên ESP32
 # Điền IP đó vào Apple Shortcuts (bước 6 trong shortcuts_guide.md)
 
 # ─── CẤU HÌNH CLOUD SERVER (ĐÁM MÂY MIỄN PHÍ) ───
-USE_CLOUD_SERVER  = True                 # True = Chạy qua Đám mây miễn phí, False = Chạy local (a-Shell/Pythonista)
-CLOUD_SERVER_HOST = "tequilamap.onrender.com"          # Domain Render đang hoạt động
-CLOUD_SERVER_PORT = 443                  # 443 cho HTTPS (Render), 80 cho HTTP (PythonAnywhere free)
-CLOUD_SERVER_SSL  = True                 # True nếu dùng HTTPS, False nếu dùng HTTP
-CLOUD_POLL_MS     = 1500                 # Tần suất ESP32 kéo thông tin bản đồ (1.5 giây/lần)
+USE_CLOUD_SERVER  = True                 # True = Cloud, False = Local
+CLOUD_SERVER_HOST = "tequilamap.onrender.com"
+CLOUD_SERVER_PORT = 443
+CLOUD_SERVER_SSL  = True
+CLOUD_POLL_MS     = 1500
+
+# ─── OPENHAYSTACK / APPLE FIND MY ───
+# ESP32 phat BLE → iPhone pickup → Apple server → Server doc GPS tu dong
+# SETUP 1 LAN: vao https://tequilamap.onrender.com/api/gen-findmy-key
+# Sau do copy public_key_bytes tra ve vao FINDMY_PUBLIC_KEY duoi day
+FINDMY_BLE_ENABLED = True
+FINDMY_PUBLIC_KEY  = bytes([           # ← PLACEHOLDER: thay bang key tu /api/gen-findmy-key
+    0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0x01, 0x02,
+    0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A,
+    0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12,
+    0x13, 0x14, 0x15, 0x16
+])
 
 
 # ─── DISPLAY (SPI) - ILI9341 / ST7789 ───
