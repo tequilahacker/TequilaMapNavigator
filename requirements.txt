@@ -1,2 +1,4 @@
 requests
 static-ffmpeg
+gunicorn
+flask

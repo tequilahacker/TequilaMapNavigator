@@ -8,7 +8,7 @@ import lvgl as lv
 import config
 from greeting import GreetingScreen
 from journey_state import JourneyStateManager
-from wifi_http_server import WiFiHTTPServer   # ← Thay BLEHandler
+from wifi_http_server import WiFiHTTPServer
 from voice_handler import VoiceHandler
 from lvgl_map_2_8 import MapDisplay
 from battery_manager import BatteryManager
@@ -16,13 +16,13 @@ from battery_manager import BatteryManager
 # ═══════════════════════════════════════════════════
 # TRẠNG THÁI THIẾT BỊ (State Machine)
 # ═══════════════════════════════════════════════════
-STATE_BOOTING     = "booting"
-STATE_IDLE        = "idle"          # Chờ kết nối iPhone
-STATE_READY       = "ready"         # iPhone kết nối, chờ lệnh
-STATE_LISTENING   = "listening"     # Đang thu giọng nói
-STATE_FETCHING    = "fetching"      # Chờ iPhone xử lý
-STATE_NAVIGATING  = "navigating"    # Đang dẫn đường
-STATE_ARRIVED     = "arrived"       # Đã đến nơi
+STATE_BOOTING    = "booting"
+STATE_IDLE       = "idle"         # Chờ kết nối WiFi
+STATE_READY      = "ready"        # Kết nối OK, chờ lệnh
+STATE_LISTENING  = "listening"    # Đang thu giọng nói
+STATE_FETCHING   = "fetching"     # Chờ AI xử lý
+STATE_NAVIGATING = "navigating"   # Đang dẫn đường
+STATE_ARRIVED    = "arrived"      # Đã đến nơi
 
 current_state = STATE_BOOTING
 
@@ -32,7 +32,6 @@ current_state = STATE_BOOTING
 def init_display():
     """Khởi tạo LVGL và display driver."""
     lv.init()
-    # Display driver tùy board - phổ biến nhất là ST7789 hoặc ILI9341
     try:
         from ili9xxx import ILI9341
         drv = ILI9341(
@@ -42,13 +41,12 @@ def init_display():
             rot=config.DISPLAY_ROTATION
         )
     except ImportError:
-        # Fallback nếu không có driver
         print("[Display] ILI9341 driver không có, dùng framebuffer mock.")
         drv = None
     return drv
 
 def init_touch():
-    """Khởi tạo capacitive touch controller (FT6236 phổ biến trên 2.8" boards)."""
+    """Khởi tạo capacitive touch controller FT6236."""
     try:
         from ft6x36 import FT6x36
         tp = FT6x36(i2c=machine.I2C(0, sda=config.I2C_SDA, scl=config.I2C_SCL, freq=400000))
@@ -63,32 +61,33 @@ def check_power_source():
         acc_adc = machine.ADC(machine.Pin(config.ACC_PIN))
         acc_adc.atten(machine.ADC.ATTN_11DB)
         raw = acc_adc.read()
-        voltage = (raw / 4095.0) * 3.6 * 3  # Voltage divider 1:3
-        print(f"[Power] ACC voltage: {voltage:.2f}V")
-        return voltage > 5.0  # > 5V = xe đang bật
+        voltage = (raw / 4095.0) * 3.6 * 3
+        return voltage > 5.0
     except Exception:
-        return True  # Assume on nếu không có ACC pin
+        return True
+
+def setup_wake_button():
+    """Cấu hình nút GPIO để kích hoạt voice command."""
+    btn = machine.Pin(config.WAKE_BUTTON_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
+    return btn
 
 # ═══════════════════════════════════════════════════
-# XỬ LÝ LỆNH GIỌNG NÓI
-# ══════════════════════════════════# ═══════════════════════════════════════════════════
-# Xử LÝ DỮ LIỆU TỪ HTTP (thay process_ble_message)
-# Các callback này được gán vào wifi_server.on_* trong main()
+# CALLBACKS: nhận dữ liệu từ Cloud / Local HTTP
 # ═══════════════════════════════════════════════════
-
 def make_on_update(map_display, journey):
-    """Tạo callback cho POST /update."""
+    """Callback cập nhật GPS + route + camera lên màn hình."""
     def on_update(lat, lon, heading, speed, route, cameras):
         global current_state
-        # Chuyển route từ [[lat,lon],...] sang [(lat,lon),...]
         route_tuples = [(r[0], r[1]) for r in route if len(r) >= 2]
-        # Chuyển cameras từ [{lat,lon,type},...] sang format map_display
         cam_list = []
         for c in cameras:
             try:
-                cam_list.append({"lat": float(c["lat"]), "lon": float(c["lon"]),
-                                  "type": c.get("type", "speed")})
-            except (KeyError, ValueError):
+                cam_list.append({
+                    "lat": float(c["lat"]) if isinstance(c, dict) else float(c[0]),
+                    "lon": float(c["lon"]) if isinstance(c, dict) else float(c[1]),
+                    "type": c.get("type", "speed") if isinstance(c, dict) else "speed"
+                })
+            except Exception:
                 pass
 
         map_display.update_position(lat, lon, heading)
@@ -101,12 +100,13 @@ def make_on_update(map_display, journey):
                 map_display.alert_label.get_text().split("\n")[0], speed, 0
             )
         journey.update_position(lat, lon, heading)
-        current_state = STATE_NAVIGATING
+        if route_tuples:
+            current_state = STATE_NAVIGATING
     return on_update
 
 
 def make_on_alert(map_display, voice):
-    """Tạo callback cho POST /alert."""
+    """Callback cảnh báo tốc độ và camera phạt nguội."""
     def on_alert(speed_limit, current_speed, speed_over, camera_dist, camera_type):
         map_display.update_speed_limit(speed_limit)
         map_display.update_navigation_data(
@@ -114,7 +114,9 @@ def make_on_alert(map_display, voice):
             current_speed, 0
         )
         if speed_over:
-            map_display.show_notification(f"⚠️ Vượt tốc độ! {int(current_speed)}/{speed_limit}km/h", 4000)
+            map_display.show_notification(
+                f"⚠️ Vượt tốc độ! {int(current_speed)}/{speed_limit}km/h", 4000
+            )
             voice.play_beep(1200, 600)
         if camera_dist < config.CAMERA_ALERT_DIST:
             cam_label = "Tốc độ" if camera_type == "speed" else "Vượt đèn đỏ"
@@ -124,23 +126,21 @@ def make_on_alert(map_display, voice):
 
 
 def make_on_voice(map_display, voice):
-    """Tạo callback cho POST /voice."""
+    """Callback nhận text/audio từ server → hiện màn hình + phát loa."""
     def on_voice(data, is_audio=False):
         if is_audio:
-            # Ghi trực tiếp dữ liệu nhị phân thô xuống I2S Speaker (MAX98357)
-            if hasattr(voice, 'audio_out') and voice.audio_out:
+            if hasattr(voice, "audio_out") and voice.audio_out:
                 try:
                     voice.audio_out.write(data)
                 except Exception as e:
-                    print("[Voice Callback] Lỗi phát âm thanh nhị phân:", e)
+                    print("[Voice CB] Lỗi phát audio:", e)
         else:
-            # Hiển thị thông báo dạng văn bản chữ lên màn hình
-            map_display.show_notification(data)
+            map_display.show_notification(str(data))
     return on_voice
 
 
 def make_on_stop(map_display, journey):
-    """Tạo callback cho POST /stop."""
+    """Callback dừng dẫn đường."""
     def on_stop():
         global current_state
         current_state = STATE_READY
@@ -152,200 +152,100 @@ def make_on_stop(map_display, journey):
 
 
 def make_on_show_routes(map_display, wifi_server):
-    """Tạo callback cho POST /show-routes."""
+    """Callback hiển thị 3 tuyến đường và xử lý chọn lựa."""
     def on_show_routes(routes):
         def select_route_callback(idx):
-            # Gửi HTTP POST /api/select-route lên iPhone Hotspot Gateway
             try:
-                iphone_ip = wifi_server.wlan.ifconfig()[2]
-                import socket
-                import json
-                s = socket.socket()
-                s.settimeout(3.0)
-                s.connect((iphone_ip, 8080))
-                payload = json.dumps({"route_index": idx}).encode("utf-8")
-                req = (
-                    "POST /api/select-route HTTP/1.1\r\n"
-                    "Host: localhost\r\n"
-                    "Content-Type: application/json\r\n"
-                    "Content-Length: %d\r\n"
-                    "Connection: close\r\n"
-                    "\r\n"
-                ) % len(payload)
-                s.send(req.encode() + payload)
-                s.close()
-                print("[Main] Đã gửi lựa chọn tuyến %d lên iPhone!" % idx)
+                if config.USE_CLOUD_SERVER:
+                    # Gửi lên Cloud HTTPS
+                    wifi_server.cloud_select_route(idx)
+                else:
+                    # Gửi về iPhone local
+                    import socket, json
+                    iphone_ip = wifi_server.wlan.ifconfig()[2]
+                    s = socket.socket()
+                    s.settimeout(3.0)
+                    s.connect((iphone_ip, 8080))
+                    payload = json.dumps({"route_index": idx}).encode("utf-8")
+                    req = (
+                        "POST /api/select-route HTTP/1.1\r\n"
+                        "Host: localhost\r\n"
+                        "Content-Type: application/json\r\n"
+                        "Content-Length: %d\r\n"
+                        "Connection: close\r\n"
+                        "\r\n"
+                    ) % len(payload)
+                    s.send(req.encode() + payload)
+                    s.close()
+                print("[Main] Đã gửi lựa chọn tuyến %d!" % idx)
             except Exception as e:
-                print("[Main] Lỗi gửi lựa chọn tuyến đường:", e)
-                
-        # Hiển thị trình chọn 3 tuyến đường trên màn hình
+                print("[Main] Lỗi gửi lựa chọn tuyến:", e)
+
         map_display.show_routes(routes, select_route_callback)
     return on_show_routes
 
-# ═══════════════════════════════════════════════════
-# NÚT WAKE WORD / VOICE TRIGGER
-# ═══════════════════════════════════════════════════
-def setup_wake_button():
-    """Cấu hình nút GPIO để kích hoạt voice command."""
-    btn = machine.Pin(config.WAKE_BUTTON_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
-    return btn
 
 # ═══════════════════════════════════════════════════
-# Xử LÝ LỆNH GIỌNG NÓI
+# CLOUD POLLING — lấy dữ liệu từ tequilamap.onrender.com
 # ═══════════════════════════════════════════════════
-def handle_voice_command(command_text):
-    """Xử lý text lệnh nhận được (từ nút vật lý hoặc local STT)."""
+def process_cloud_status(data, wifi_server, voice, map_display):
+    """Xử lý JSON status trả về từ /api/status của Cloud."""
     global current_state
-    cmd = command_text.strip().lower()
-    
-    if any(x in cmd for x in ["dừng", "hủy", "thôi"]):
-        return "STOP"
-    elif any(x in cmd for x in ["đi đến", "đến", "tới", "navigate"]):
-        return "NAVIGATE"
-    elif any(x in cmd for x in ["thêm điểm", "dừng ở", "ghé"]):
-        return "ADD_WAYPOINT"
-    elif any(x in cmd for x in ["ở đâu", "vị trí", "where"]):
-        return "WHERE_AM_I"
-    elif any(x in cmd for x in ["pin", "battery", "bao nhiêu"]):
-        return "BATTERY_STATUS"
-    else:
-        return "UNKNOWN"
 
+    lat        = data.get("gps_lat")
+    lon        = data.get("gps_lon")
+    is_nav     = data.get("is_navigating", False)
+    route_poly = data.get("route_polyline", [])
+    speed_kmh  = data.get("speed_kmh", 0)
+    cam_warning = data.get("camera_warning")
+    selecting  = data.get("selecting_route", False)
+    pending_rts = data.get("pending_routes", [])
+    voice_reply = data.get("voice_reply")
+    instruction = data.get("current_instruction", "")
+    eta_min    = data.get("eta_min")
+    dist_remain = data.get("dist_remain_km")
+    speed_limit = data.get("speed_limit_now", 60)
+    cam_dist   = data.get("camera_dist_m", 9999)
+    cam_type   = data.get("camera_type", "speed")
+    cameras_nearby = data.get("cameras_nearby", [])
 
-def poll_cloud_server(server_ip_or_host):
-    """Gửi một HTTP GET request đến Cloud Server để kéo thông tin hành trình và cảnh báo."""
-    import socket
-    import json
-    
-    if config.USE_CLOUD_SERVER:
-        host = config.CLOUD_SERVER_HOST
-        port = config.CLOUD_SERVER_PORT
-        use_ssl = config.CLOUD_SERVER_SSL
-    else:
-        # Fallback local polling nếu cần
-        host = server_ip_or_host
-        port = 8080
-        use_ssl = False
-        
-    try:
-        addr = socket.getaddrinfo(host, port)[0][-1]
-        s = socket.socket()
-        s.settimeout(2.5) # Giới hạn timeout ngắn tránh đơ UI
-        s.connect(addr)
-        
-        # Nếu dùng HTTPS, bọc socket với SSL
-        if use_ssl:
+    # 1. Cập nhật GPS + route + camera lên màn hình
+    if lat and lon and wifi_server.on_update:
+        wifi_server.on_update(lat, lon, 0, speed_kmh, route_poly, cameras_nearby)
+
+    # 2. Cập nhật hướng dẫn dẫn đường
+    if instruction and is_nav:
+        map_display.update_navigation_data(instruction, speed_kmh, 0)
+        if eta_min:
+            map_display.update_eta(eta_min, dist_remain)
+
+    # 3. Cảnh báo tốc độ và camera
+    speed_over = speed_kmh > (speed_limit + 5) if speed_limit else False
+    if (speed_over or cam_warning) and wifi_server.on_alert:
+        wifi_server.on_alert(speed_limit, speed_kmh, speed_over, cam_dist, cam_type)
+
+    # 4. Voice reply mới từ AI → hiển thị + phát loa
+    if voice_reply:
+        if wifi_server.on_voice:
+            wifi_server.on_voice(voice_reply, is_audio=False)
+        # Kéo audio PCM về phát loa
+        pcm = wifi_server.poll_cloud_audio()
+        if pcm and hasattr(voice, "audio_out") and voice.audio_out:
             try:
-                import ussl
-                s = ussl.wrap_socket(s, server_hostname=host)
-            except Exception:
-                try:
-                    import ssl
-                    s = ssl.wrap_socket(s, server_hostname=host)
-                except Exception:
-                    pass
-                    
-        # Yêu cầu GET để poll trạng thái của thiết bị
-        request = (
-            f"GET /api/poll-device HTTP/1.1\r\n"
-            f"Host: {host}:{port}\r\n"
-            f"Connection: close\r\n"
-            f"\r\n"
-        ).encode()
-        s.send(request)
-        
-        # Nhận toàn bộ phản hồi
-        response = bytearray()
-        while True:
-            chunk = s.recv(1024)
-            if not chunk:
-                break
-            response.extend(chunk)
-        s.close()
-        
-        # Tách Header và Body
-        resp_str = response.decode('utf-8', 'ignore')
-        parts = resp_str.split("\r\n\r\n", 1)
-        if len(parts) < 2:
-            return None
-            
-        body = parts[1].strip()
-        if not body:
-            return None
-        data = json.loads(body)
-        return data
-    except Exception as e:
-        # Giảm thiểu log in ra màn hình để tránh trôi log
-        # print("[Poll] Lỗi kết nối đám mây:", e)
-        return None
+                voice.audio_out.write(pcm)
+            except Exception as e:
+                print("[Cloud Audio] Lỗi phát:", e)
 
+    # 5. Màn hình chọn 3 tuyến đường
+    if selecting and pending_rts and wifi_server.on_show_routes:
+        wifi_server.on_show_routes(pending_rts)
+        current_state = STATE_FETCHING
 
-def play_audio_from_cloud(voice_handler, server_ip_or_host):
-    """Tải và phát trực tiếp luồng âm thanh PCM nhị phân từ máy chủ đám mây qua Loa xe máy."""
-    import socket
-    if config.USE_CLOUD_SERVER:
-        host = config.CLOUD_SERVER_HOST
-        port = config.CLOUD_SERVER_PORT
-        use_ssl = config.CLOUD_SERVER_SSL
-    else:
-        host = server_ip_or_host
-        port = 8080
-        use_ssl = False
-        
-    try:
-        addr = socket.getaddrinfo(host, port)[0][-1]
-        s = socket.socket()
-        s.settimeout(5.0)
-        s.connect(addr)
-        if use_ssl:
-            try:
-                import ussl
-                s = ussl.wrap_socket(s, server_hostname=host)
-            except Exception:
-                try:
-                    import ssl
-                    s = ssl.wrap_socket(s, server_hostname=host)
-                except Exception:
-                    pass
-                    
-        # Yêu cầu GET tải file pcm thô
-        request = (
-            f"GET /api/get-audio HTTP/1.1\r\n"
-            f"Host: {host}:{port}\r\n"
-            f"Connection: close\r\n"
-            f"\r\n"
-        ).encode()
-        s.send(request)
-        
-        # Đọc phản hồi và bỏ qua HTTP headers
-        response_started = False
-        header_buf = bytearray()
-        
-        # Đọc từng byte để lọc header \r\n\r\n
-        chunk = bytearray(1)
-        while not response_started:
-            if s.readinto(chunk) > 0:
-                header_buf.extend(chunk)
-                if header_buf.endswith(b"\r\n\r\n"):
-                    response_started = True
-            else:
-                break
-                
-        # Phát trực tiếp dữ liệu âm thanh nhị phân còn lại vào I2S Speaker
-        audio_chunk = bytearray(512) # Chunk 512 bytes tối ưu cho I2S
-        while True:
-            bytes_read = s.readinto(audio_chunk)
-            if bytes_read > 0:
-                if hasattr(voice_handler, 'audio_out') and voice_handler.audio_out:
-                    try:
-                        voice_handler.audio_out.write(audio_chunk[:bytes_read])
-                    except Exception:
-                        pass
-            else:
-                break
-        s.close()
-    except Exception as e:
-        print("[Voice Stream] Lỗi phát âm thanh:", e)
+    # 6. Đã đến đích
+    if not is_nav and not selecting and current_state == STATE_NAVIGATING:
+        arr_text = data.get("arrived_text", "")
+        if arr_text:
+            current_state = STATE_ARRIVED
 
 
 # ═══════════════════════════════════════════════════
@@ -353,244 +253,231 @@ def play_audio_from_cloud(voice_handler, server_ip_or_host):
 # ═══════════════════════════════════════════════════
 def main():
     global current_state
-    
+
     print("\n" + "="*50)
-    print("  TEQUILA MOTORCYCLE NAVIGATOR - BOOTING")
+    print("  TEQUILA MAP - BOOTING")
     print("="*50 + "\n")
-    
+
     # 1. Khởi tạo hardware
     print("[Boot] Khởi tạo màn hình...")
     display_drv = init_display()
-    
+
     print("[Boot] Khởi tạo touch...")
     touch = init_touch()
-    
+
     print("[Boot] Khởi tạo battery manager...")
     battery = BatteryManager(config.BATTERY_ADC_PIN)
-    
+
     print("[Boot] Khởi tạo voice handler...")
     voice = VoiceHandler(
         i2s_mic_sck=config.MIC_SCK, i2s_mic_ws=config.MIC_WS, i2s_mic_sd=config.MIC_SD,
         i2s_spk_sck=config.SPK_SCK, i2s_spk_ws=config.SPK_WS, i2s_spk_sd=config.SPK_SD,
     )
-    
+
     print("[Boot] Khởi tạo journey state manager...")
     journey = JourneyStateManager()
-    
+
     print("[Boot] Khởi tạo LVGL map display...")
     map_display = MapDisplay(display_drv, touch)
-    
-    print("[Boot] Khởi tạo WiFi HTTP Server (thay BLE)...")
+
+    print("[Boot] Khởi tạo WiFi HTTP/Cloud Server...")
     wifi_server = WiFiHTTPServer()
     wifi_ok = wifi_server.connect_wifi()
+
     if wifi_ok:
+        # Cloud mode: không cần start local server
         wifi_server.start()
-        
-        # Bắn tín hiệu Boot thông báo cho iPhone Companion
-        try:
-            iphone_ip = wifi_server.wlan.ifconfig()[2]
-            print("[Boot] Đang gửi thông báo Boot lên iPhone: %s" % iphone_ip)
-            import socket
-            s = socket.socket()
-            s.settimeout(2.0)
-            s.connect((iphone_ip, 8080))
-            req = "POST /api/boot HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n"
-            s.send(req.encode())
-            s.close()
-            print("[Boot] Đã gửi thông báo Boot thành công!")
-        except Exception as e:
-            print("[Boot] Không thể gửi thông báo Boot lên iPhone:", e)
 
         # Gán callbacks
-        wifi_server.on_update = make_on_update(map_display, journey)
-        wifi_server.on_alert  = make_on_alert(map_display, voice)
-        wifi_server.on_voice  = make_on_voice(map_display, voice)
-        wifi_server.on_stop   = make_on_stop(map_display, journey)
+        wifi_server.on_update     = make_on_update(map_display, journey)
+        wifi_server.on_alert      = make_on_alert(map_display, voice)
+        wifi_server.on_voice      = make_on_voice(map_display, voice)
+        wifi_server.on_stop       = make_on_stop(map_display, journey)
         wifi_server.on_show_routes = make_on_show_routes(map_display, wifi_server)
-        map_display.show_notification(f"WiFi OK − IP: {wifi_server.ip}")
+
+        map_display.show_notification(f"WiFi OK − {wifi_server.ip}")
         map_display.update_connection_status(True)
+
+        # ── Boot handshake lên Cloud / iPhone ──
+        if config.USE_CLOUD_SERVER:
+            print("[Boot] Gửi tín hiệu boot lên Cloud tequilamap.onrender.com...")
+            boot_resp = wifi_server.cloud_boot()
+            pending_resume = boot_resp.get("pending_resume", False)
+        else:
+            # Local iPhone
+            pending_resume = False
+            try:
+                import socket
+                iphone_ip = wifi_server.wlan.ifconfig()[2]
+                s = socket.socket()
+                s.settimeout(2.0)
+                s.connect((iphone_ip, 8080))
+                req = "POST /api/boot HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n"
+                s.send(req.encode())
+                s.close()
+                print("[Boot] Đã gửi boot lên iPhone local!")
+            except Exception as e:
+                print("[Boot] Lỗi gửi boot local:", e)
     else:
         map_display.show_notification("⚠️ Không có WiFi! Kiểm tra hotspot iPhone.")
         map_display.update_connection_status(False)
-    
-    # 2. Boot greeting sequence
+        pending_resume = False
+
+    # 2. Boot greeting (loa xe phát lời chào)
     print("[Boot] Chạy boot greeting...")
     greeting = GreetingScreen(audio_out=voice.speaker)
     boot_result = greeting.run_boot_sequence(journey, audio_out=voice.speaker)
-    
-    # 3. Check ACC pin (xe có đang bật không)
+
+    # 3. Check ACC pin
     engine_on = check_power_source()
     print(f"[Boot] ACC power: {'ON' if engine_on else 'OFF'}")
-    
-    # 4. Resume hoặc fresh start
-    if boot_result == 'resume':
+
+    # 4. Resume journey nếu có hành trình cũ
+    if boot_result == "resume" or pending_resume:
         journey.load()
         current_state = STATE_NAVIGATING
         map_display.show_notification("Đang tiếp tục hành trình cũ...")
-        print("[Boot] Resume journey từ flash.")
+        print("[Boot] Resume journey từ flash/cloud.")
     else:
         current_state = STATE_IDLE
-        
-    # 5. Load màn hình chính
-    map_display.show_screen_state("idle")
-    
-    # 7. Cấu hình wake button
+
+    map_display.show_screen_state("idle" if not wifi_ok else "ready")
+
+    # 5. Wake button
     wake_btn = setup_wake_button()
     last_btn_state = 1
-    
-    # 8. Timer thực hiện update định kỳ
-    last_update_ms = time.ticks_ms()
-    last_save_ms = time.ticks_ms()
-    last_poll_ms = time.ticks_ms()
-    UPDATE_INTERVAL_MS = 8000   # 8 giây request update GPS
-    SAVE_INTERVAL_MS = 30000    # 30 giây auto-save journey
-    
+
+    # 6. Timers
+    SAVE_INTERVAL_MS   = 30000   # Auto-save mỗi 30 giây
+    last_save_ms       = time.ticks_ms()
+    last_gps_push_ms   = time.ticks_ms()
+    GPS_PUSH_INTERVAL  = 3000    # Đẩy GPS lên Cloud mỗi 3 giây
+
     print("\n[Main] ✅ Hệ thống sẵn sàng! Vào vòng lặp chính.\n")
-    
+
     # ═══════ MAIN LOOP ═══════
     while True:
         now_ms = time.ticks_ms()
-        lv.task_handler()  # Cần gọi liên tục để LVGL render
-        
-        # ─── Kiểm tra kích hoạt giọng nói (VAD) hoặc nút bấm ───
+        lv.task_handler()  # LVGL render
+
+        # ─── Wake: nút nhấn hoặc VAD ───
         btn_state = wake_btn.value()
         trigger_recording = False
-        
-        # 1. Kích hoạt bằng nút nhấn (GPIO0)
+
         if btn_state == 0 and last_btn_state == 1:
-            print("[Wake] Kích hoạt bằng nút nhấn vật lý!")
+            print("[Wake] Kích hoạt bằng nút nhấn!")
             trigger_recording = True
-            
-        # 2. Kích hoạt tự động bằng giọng nói (VAD) khi đang rảnh tay
         elif current_state in (STATE_READY, STATE_NAVIGATING):
-            # Đo cường độ âm thanh trong 80ms
             if voice.detect_vad_trigger(threshold_db=4000, check_duration_ms=80):
-                print("[Wake] Kích hoạt rảnh tay bằng tiếng nói (VAD)!")
+                print("[Wake] Kích hoạt VAD!")
                 trigger_recording = True
-                
+
         last_btn_state = btn_state
-        
-        # Thực hiện tiến trình ghi âm & đẩy lên AI
+
+        # ─── Ghi âm & gửi lên AI ───
         if trigger_recording:
-            prev_state = current_state
             current_state = STATE_LISTENING
             map_display.show_screen_state("listening")
             map_display.show_notification("🎤 Đang lắng nghe...")
-            
-            # Ghi âm 4 giây
+
             audio_data = voice.record_audio(duration_sec=4)
-            
+
             if audio_data:
+                current_state = STATE_FETCHING
                 map_display.show_screen_state("fetching")
                 map_display.show_notification("🤖 Đang gửi lên AI...")
-                
-                # Lấy IP gateway iPhone động
+
                 try:
-                    iphone_ip = wifi_server.wlan.ifconfig()[2]
-                    print(f"[Main] Đang gửi âm thanh lên iPhone: {iphone_ip}")
-                    success = voice.post_audio_to_iphone(iphone_ip, audio_data)
-                    if success:
-                        map_display.show_notification("✅ AI đang phản hồi...")
+                    if config.USE_CLOUD_SERVER:
+                        # Gửi PCM trực tiếp lên Cloud
+                        resp = wifi_server.cloud_send_voice(audio_data)
+                        if resp:
+                            map_display.show_notification("✅ AI đang phản hồi...")
+                        else:
+                            map_display.show_notification("❌ Lỗi gửi Cloud!")
                     else:
-                        map_display.show_notification("❌ Lỗi kết nối iPhone!")
-                        voice.play_beep(600, 300)
+                        # Gửi lên iPhone local
+                        iphone_ip = wifi_server.wlan.ifconfig()[2]
+                        success = voice.post_audio_to_iphone(iphone_ip, audio_data)
+                        if success:
+                            map_display.show_notification("✅ AI đang phản hồi...")
+                        else:
+                            map_display.show_notification("❌ Lỗi kết nối iPhone!")
+                            voice.play_beep(600, 300)
                 except Exception as e:
-                    print("[Main] Lỗi lấy IP / gửi audio:", e)
-                    map_display.show_notification("❌ Không có kết nối mạng!")
-            
-            # Khôi phục trạng thái cũ
-            if journey.is_active:
-                current_state = STATE_NAVIGATING
-                map_display.show_screen_state("navigating")
-            else:
-                current_state = STATE_READY
-                map_display.show_screen_state("ready")
-        
-        # ─── Poll HTTP server hoặc Cloud Server ───
-        if config.USE_CLOUD_SERVER:
-            # Poll Cloud định kỳ
-            elapsed_poll = time.ticks_diff(now_ms, last_poll_ms)
-            if elapsed_poll >= config.CLOUD_POLL_MS and wifi_server.is_connected:
-                last_poll_ms = now_ms
-                iphone_ip = wifi_server.wlan.ifconfig()[2] if (hasattr(wifi_server, 'wlan') and wifi_server.wlan and wifi_server.wlan.isconnected()) else "172.20.10.1"
-                cloud_data = poll_cloud_server(iphone_ip)
-                if cloud_data:
-                    # Kích hoạt các callback tương ứng từ dữ liệu Cloud
-                    if "update" in cloud_data and cloud_data["update"] and getattr(wifi_server, 'on_update', None):
-                        up = cloud_data["update"]
-                        wifi_server.on_update(
-                            up.get("lat"), up.get("lon"), up.get("heading", 0),
-                            up.get("speed", 0), up.get("route", []), up.get("cameras", [])
-                        )
-                    if "alert" in cloud_data and cloud_data["alert"] and getattr(wifi_server, 'on_alert', None):
-                        al = cloud_data["alert"]
-                        wifi_server.on_alert(
-                            al.get("speed_limit", 50), al.get("current_speed", 0),
-                            al.get("speed_over", False), al.get("camera_dist", 999), al.get("camera_type", "speed")
-                        )
-                    if "voice" in cloud_data and cloud_data["voice"]:
-                        vo = cloud_data["voice"]
-                        text_to_show = vo.get("text", "")
-                        has_audio = vo.get("has_audio", False)
-                        
-                        # Hiển thị chữ lên màn hình xe
-                        if getattr(wifi_server, 'on_voice', None):
-                            wifi_server.on_voice(text_to_show, is_audio=False)
-                            
-                        # Kéo âm thanh PCM về phát trực tiếp qua Loa xe máy
-                        if has_audio:
-                            play_audio_from_cloud(voice, iphone_ip)
-                    if cloud_data.get("stop") and getattr(wifi_server, 'on_stop', None):
-                        wifi_server.on_stop()
-        else:
-            wifi_server.poll()  # Xử lý 1 HTTP request nếu có ở chế độ Local
+                    print("[Main] Lỗi gửi audio:", e)
+                    map_display.show_notification("❌ Không có mạng!")
 
+            # Khôi phục trạng thái
+            current_state = STATE_NAVIGATING if journey.is_active else STATE_READY
+            map_display.show_screen_state("navigating" if journey.is_active else "ready")
 
-        # ─── Reconnect WiFi nếu mất kết nối ───
+        # ─── Cloud Polling (thay thế cả poll_cloud_server + play_audio) ───
+        if config.USE_CLOUD_SERVER and wifi_server.is_connected:
+            # Đẩy GPS lên Cloud định kỳ (từ GPS thật của ESP32 nếu có)
+            if time.ticks_diff(now_ms, last_gps_push_ms) >= GPS_PUSH_INTERVAL:
+                last_gps_push_ms = now_ms
+                # Lấy tốc độ từ màn hình (hiện tại = 0 vì GPS từ iPhone)
+                wifi_server.cloud_send_gps(
+                    wifi_server._device_lat or 0,
+                    wifi_server._device_lon or 0,
+                    0, 0
+                )
+
+            # Poll /api/status từ Cloud
+            import json
+            body = wifi_server._https_get("/api/status")
+            if body:
+                try:
+                    cloud_data = json.loads(body)
+                    process_cloud_status(cloud_data, wifi_server, voice, map_display)
+                except Exception as e:
+                    print("[Poll] Parse lỗi:", e)
+
+        elif not config.USE_CLOUD_SERVER:
+            wifi_server.poll()  # Local HTTP request
+
+        # ─── Reconnect WiFi ───
         if not wifi_server.is_connected:
             map_display.update_connection_status(False)
-            map_display.show_screen_state("idle")
-            wifi_server.check_wifi()  # Tự reconnect
+            wifi_server.check_wifi()
         else:
             if current_state == STATE_IDLE:
                 current_state = STATE_READY
                 map_display.show_screen_state("ready")
                 map_display.update_connection_status(True)
-                
-        # ─── Update định kỳ khi đang dẫn đường ───
-        # (Không cần gử REQ_UPDATE qua WiFi — Shortcuts tự POST định kỳ)
-                    
-        # ─── Auto-save journey state ───
+
+        # ─── Auto-save journey ───
         if journey.is_active:
-            elapsed_save = time.ticks_diff(now_ms, last_save_ms)
-            if elapsed_save >= SAVE_INTERVAL_MS:
+            if time.ticks_diff(now_ms, last_save_ms) >= SAVE_INTERVAL_MS:
                 last_save_ms = now_ms
                 journey.save()
-                
-        # ─── Cập nhật battery display ───
+
+        # ─── Battery display ───
         bat_pct = battery.get_percentage()
         if bat_pct is not None:
             map_display.update_battery(bat_pct)
             if bat_pct < 10:
                 map_display.show_notification("⚠️ Pin yếu, cần sạc!")
-                
-        # ─── Kiểm tra xe tắt máy (mất nguồn ACC) ───
+
+        # ─── Tắt máy xe → DeepSleep ───
         if not check_power_source() and engine_on:
-            print("[Power] Phát hiện tắt máy xe! Lưu hành trình và sleep...")
+            print("[Power] Xe tắt máy! Lưu hành trình và sleep...")
             journey.save()
             map_display.show_notification("Đang lưu hành trình...")
             time.sleep_ms(500)
             lv.task_handler()
-            machine.deepsleep()  # Sẽ wake up khi có power lại
-            
+            machine.deepsleep()
+
         # ─── Đã đến nơi ───
         if current_state == STATE_ARRIVED:
             voice.play_beep(1200, 1000)
             time.sleep(3)
             current_state = STATE_READY
             map_display.show_screen_state("ready")
-            
-        time.sleep_ms(20)  # ~50 FPS LVGL update
+
+        time.sleep_ms(20)  # ~50 FPS
+
 
 # ═══════════════════════════════════════════════════
 # ENTRY POINT
@@ -605,4 +492,4 @@ if __name__ == "__main__":
         print("[Main] FATAL ERROR:", e)
         sys.print_exception(e)
         time.sleep(3)
-        machine.reset()  # Auto-restart khi có lỗi
+        machine.reset()

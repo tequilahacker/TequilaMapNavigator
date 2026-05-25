@@ -11,7 +11,7 @@ HTTP_PORT     = 80                     # Port HTTP server trên ESP32
 
 # ─── CẤU HÌNH CLOUD SERVER (ĐÁM MÂY MIỄN PHÍ) ───
 USE_CLOUD_SERVER  = True                 # True = Chạy qua Đám mây miễn phí, False = Chạy local (a-Shell/Pythonista)
-CLOUD_SERVER_HOST = "tequila-navigator.onrender.com"  # Điền domain Render/PythonAnywhere của bạn
+CLOUD_SERVER_HOST = "tequilamap.onrender.com"          # Domain Render đang hoạt động
 CLOUD_SERVER_PORT = 443                  # 443 cho HTTPS (Render), 80 cho HTTP (PythonAnywhere free)
 CLOUD_SERVER_SSL  = True                 # True nếu dùng HTTPS, False nếu dùng HTTP
 CLOUD_POLL_MS     = 1500                 # Tần suất ESP32 kéo thông tin bản đồ (1.5 giây/lần)

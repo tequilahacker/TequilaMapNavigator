@@ -277,8 +277,12 @@ class TequilaNavigatorWiFiIOS:
                 if instruction_data.get("maneuver") == "arrive":
                     print("[Nav] 🎉 Đã đến điểm đích!")
                     self.is_navigating = False
-                    self.server.update_status(is_navigating=False)
-                    self.server.trigger_voice_alert("Bạn đã đến điểm đích thành công. Hành trình kết thúc.")
+                    arrived_msg = "Bạn đã đến điểm đích thành công. Hành trình kết thúc."
+                    self.server.update_status(
+                        is_navigating=False,
+                        arrived_text=arrived_msg
+                    )
+                    self.server.trigger_voice_alert(arrived_msg)
                     time.sleep(2)
                     self.send_to_esp32("stop", {})
                     break

@@ -750,6 +750,13 @@ class NavigatorWebServer:
             "route_polyline": [],       # Polyline hiển thị trên Web UI
             "pending_routes": [],       # 3 tuyến đường đang chờ user chọn
             "selecting_route": False,   # True khi đang ở màn chọn tuyến
+            "pending_resume": False,    # True khi chờ user xác nhận tiếp tục hành trình cũ
+            # ── Dữ liệu cảnh báo realtime cho ESP32 Cloud Polling ──
+            "speed_limit_now": 60,      # Giới hạn tốc độ đoạn đường hiện tại (km/h)
+            "camera_dist_m": 9999,      # Khoảng cách camera gần nhất (mét)
+            "camera_type": "speed",     # Loại camera: speed / redlight
+            "cameras_nearby": [],       # Danh sách camera gần (50–300m)
+            "arrived_text": "",         # Thông báo đã đến đích (xóa sau khi ESP32 đọc)
         }
         self.device_state = {
             "update": None,      # Gói tin update bản đồ cho ESP32
@@ -1105,8 +1112,48 @@ class NavigatorWebServer:
                     # Lấy GPS real-time cập nhật vào status
                     if server_self.gps:
                         pos = server_self.gps.get_current()
-                        server_self.update_status(gps_lat=pos[0], gps_lon=pos[1], speed_kmh=server_self.gps.get_speed_kmh())
-                    self.send_json(server_self.status)
+                        server_self.update_status(
+                            gps_lat=pos[0], gps_lon=pos[1],
+                            speed_kmh=server_self.gps.get_speed_kmh()
+                        )
+
+                    # Tính cảnh báo realtime cho ESP32 Cloud Polling
+                    try:
+                        lat = server_self.status.get("gps_lat")
+                        lon = server_self.status.get("gps_lon")
+                        if lat and lon and server_self.cam_engine:
+                            nearby_cams = server_self.cam_engine.get_nearby_cameras(
+                                lat, lon, radius_m=300
+                            )
+                            if nearby_cams:
+                                closest = min(nearby_cams,
+                                              key=lambda c: c.get("distance_m", 9999))
+                                server_self.update_status(
+                                    camera_dist_m=int(closest.get("distance_m", 9999)),
+                                    camera_type=closest.get("type", "speed"),
+                                    cameras_nearby=[
+                                        {
+                                            "lat": c["lat"], "lon": c["lon"],
+                                            "type": c.get("type", "speed"),
+                                            "speed_limit": c.get("speed_limit", 60),
+                                            "distance_m": int(c.get("distance_m", 9999))
+                                        }
+                                        for c in nearby_cams[:5]
+                                    ]
+                                )
+                            else:
+                                server_self.update_status(
+                                    camera_dist_m=9999,
+                                    cameras_nearby=[]
+                                )
+                    except Exception:
+                        pass
+
+                    # Xoá arrived_text sau khi ESP32 đọc
+                    status_copy = dict(server_self.status)
+                    if status_copy.get("arrived_text"):
+                        server_self.status["arrived_text"] = ""
+                    self.send_json(status_copy)
                 elif self.path == '/api/poll-device':
                     # Trả trạng thái thiết bị gom được cho ESP32 Polling
                     state = server_self.device_state.copy()
