@@ -331,38 +331,22 @@ HTML_PAGE = """<!DOCTYPE html>
 </div>
 
 <!-- Apple Find My Setup Panel - dung <details> thuan HTML, khong can JS toggle -->
-<details class="card" id="findmy-panel" style="border:2px solid #4a90d9; cursor:pointer;">
-  <summary style="color:#4a90d9; font-size:14px; font-weight:700; padding:4px 0; list-style:none; display:flex; align-items:center; gap:8px;">
-    <span id="findmy-summary-dot" style="width:10px;height:10px;border-radius:50%;background:#555;display:inline-block;"></span>
-    🍎 Kết Nối Apple Find My — Bấm để mở/đóng
-  </summary>
-
-  <p style="color:#aaa; font-size:12px; margin:10px 0;">
-    Đăng nhập Apple ID 1 lần → server tự đọc GPS từ app Tìm, không cần mở Safari nữa.
+<div class="card" style="border:2px solid #4a90d9; padding:14px;">
+  <div style="font-size:14px;font-weight:700;color:#4a90d9;margin-bottom:8px;">
+    &#127822; Ket Noi Apple Find My
+  </div>
+  <p style="color:#aaa;font-size:12px;margin-bottom:12px;">
+    Dang nhap Apple ID 1 lan de server tu doc GPS tu app Tim.
+    Khong can mo Safari hay app nao nua.
   </p>
-
-  <div id="findmy-form-area">
-    <input type="email" id="apple-id-input" placeholder="Apple ID (email)"
-           style="width:100%;box-sizing:border-box;background:#1a1a2e;color:#eee;border:1px solid #4a90d9;border-radius:8px;padding:10px;font-size:14px;margin-bottom:8px;">
-    <input type="password" id="apple-pw-input" placeholder="Mật khẩu Apple ID"
-           style="width:100%;box-sizing:border-box;background:#1a1a2e;color:#eee;border:1px solid #4a90d9;border-radius:8px;padding:10px;font-size:14px;margin-bottom:12px;">
-    <button class="btn btn-primary" onclick="setupFindMy()" style="width:100%;">
-      🍎 Đăng nhập Apple ID
-    </button>
-  </div>
-
-  <div id="findmy-2fa-area" style="display:none; margin-top:10px;">
-    <p style="color:#f0a500; font-size:13px; margin:0 0 8px 0;">📱 Apple đã gửi mã 6 số về iPhone của bạn.</p>
-    <input type="text" id="findmy-2fa-input" placeholder="- - - - - -"
-           maxlength="6" inputmode="numeric"
-           style="width:100%;box-sizing:border-box;background:#1a1a2e;color:#eee;border:1px solid #f0a500;border-radius:8px;padding:12px;font-size:22px;text-align:center;letter-spacing:12px;margin-bottom:12px;">
-    <button class="btn btn-success" onclick="submit2FA()" style="width:100%;">
-      ✅ Xác nhận mã 2FA
-    </button>
-  </div>
-
-  <div id="findmy-status-msg" style="font-size:13px;margin-top:10px;padding:8px;border-radius:6px;display:none;"></div>
-</details>
+  <a href="/setup-findmy"
+     style="display:block;width:100%;padding:12px;background:#4a90d9;color:#fff;
+            text-align:center;border-radius:10px;font-size:15px;font-weight:700;
+            text-decoration:none;">
+    &#127822; Mo trang Setup Apple Find My
+  </a>
+  <div id="findmy-status-msg" style="display:none;"></div>
+</div>
 
 <!-- 3 Alternatives Route Selection Panel -->
 <div class="card" id="route-select-panel">
@@ -880,6 +864,86 @@ async function stopNavigation() {
 </html>"""
 
 
+
+FINDMY_SETUP_PAGE = '''<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tequila Map - Ket noi Apple Find My</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d0d1a;color:#eee;font-family:-apple-system,BlinkMacSystemFont,sans-serif;
+     display:flex;flex-direction:column;align-items:center;padding:30px 20px;min-height:100vh}
+.card{background:#12122a;border:1.5px solid #4a90d9;border-radius:16px;
+      padding:24px;width:100%;max-width:420px;margin-bottom:16px}
+h1{color:#4a90d9;font-size:20px;margin-bottom:6px}
+p{color:#aaa;font-size:13px;line-height:1.6;margin-bottom:16px}
+input{width:100%;padding:12px;background:#1a1a3e;color:#eee;
+      border:1px solid #4a90d9;border-radius:10px;font-size:15px;margin-bottom:10px}
+button{width:100%;padding:14px;background:#4a90d9;color:#fff;
+       border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer}
+button:active{opacity:0.8}
+.msg{padding:12px;border-radius:10px;font-size:13px;text-align:center}
+.msg-warn{background:#2a1a00;color:#f0a500;border:1px solid #f0a500}
+.msg-ok{background:#0a2a0a;color:#00ff87;border:1px solid #00ff87}
+.msg-err{background:#2a0a0a;color:#ff4444;border:1px solid #ff4444}
+a{color:#4a90d9;font-size:14px}
+.back{margin-top:20px;text-align:center}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>&#127822; Ket Noi Apple Find My</h1>
+  <p>Dang nhap Apple ID 1 lan. Server tu doc GPS tu app Tim - khong can mo Safari nua.</p>
+  {MSG}
+  <form method="POST" action="/api/setup-findmy-form">
+    <input type="email" name="apple_id" placeholder="Apple ID (email)" required autocomplete="email">
+    <input type="password" name="password" placeholder="Mat khau Apple ID" required autocomplete="current-password">
+    <button type="submit">&#127822; Dang nhap Apple ID</button>
+  </form>
+</div>
+<div class="back"><a href="/">&larr; Quay lai ban do</a></div>
+</body>
+</html>'''
+
+FINDMY_2FA_PAGE = '''<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tequila Map - Xac nhan 2FA</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d0d1a;color:#eee;font-family:-apple-system,BlinkMacSystemFont,sans-serif;
+     display:flex;flex-direction:column;align-items:center;padding:30px 20px;min-height:100vh}
+.card{background:#12122a;border:1.5px solid #f0a500;border-radius:16px;
+      padding:24px;width:100%;max-width:420px}
+h1{color:#f0a500;font-size:20px;margin-bottom:6px}
+p{color:#aaa;font-size:13px;margin-bottom:16px;line-height:1.6}
+input{width:100%;padding:14px;background:#1a1a3e;color:#eee;
+      border:1px solid #f0a500;border-radius:10px;font-size:28px;
+      text-align:center;letter-spacing:16px;font-weight:700;margin-bottom:12px}
+button{width:100%;padding:14px;background:#f0a500;color:#000;
+       border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer}
+a{color:#4a90d9;font-size:14px}
+.back{margin-top:20px;text-align:center}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>&#128241; Nhap Ma 2FA</h1>
+  <p>Apple da gui ma 6 chu so ve iPhone cua ban qua thong bao he thong.</p>
+  <form method="POST" action="/api/setup-findmy-2fa">
+    <input type="text" name="code" placeholder="000000" maxlength="6"
+           inputmode="numeric" pattern="[0-9]{6}" required autofocus>
+    <button type="submit">Xac nhan</button>
+  </form>
+</div>
+<div class="back"><a href="/">&larr; Quay lai ban do</a></div>
+</body>
+</html>'''
+
 class NavigatorWebServer:
     """Flask-style HTTP server chạy trên Pythonista iPhone qua mạng WiFi Hotspot."""
     
@@ -1285,6 +1349,20 @@ class NavigatorWebServer:
                     self.send_header('Content-Type', 'text/html; charset=utf-8')
                     self.end_headers()
                     self.wfile.write(HTML_PAGE.encode('utf-8'))
+
+                # ─── Trang setup Apple Find My (khong can JS) ───
+                elif self.path == '/setup-findmy':
+                    is_setup = server_self.findmy_reader.is_setup
+                    if is_setup:
+                        msg = '<div class="msg msg-ok">&#9989; Da ket noi Apple Find My thanh cong! Server dang doc GPS tu dong.</div>'
+                    else:
+                        msg = ''
+                    page = FINDMY_SETUP_PAGE.replace('{MSG}', msg)
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.end_headers()
+                    self.wfile.write(page.encode('utf-8'))
+
                 elif self.path == '/api/status':
                     # Lấy GPS real-time cập nhật vào status
                     if server_self.gps:
@@ -1634,7 +1712,75 @@ class NavigatorWebServer:
                     threading.Thread(target=calc_routes, daemon=True).start()
                     self.send_json({"status": "calculating"})
 
-                # ── FindMy: Dang nhap Apple ID ──
+                # ── FindMy: Form-based setup (khong can JS, redirect sau khi xong) ──
+                elif self.path == '/api/setup-findmy-form':
+                    import urllib.parse
+                    body_str = body.decode('utf-8', errors='replace') if isinstance(body, bytes) else body
+                    params = urllib.parse.parse_qs(body_str)
+                    apple_id = params.get('apple_id', [''])[0].strip()
+                    password = params.get('password', [''])[0]
+                    if not apple_id or not password:
+                        # Quay lai trang setup voi thong bao loi
+                        msg = '<div class="msg msg-err">Vui long nhap Apple ID va mat khau!</div>'
+                        page = FINDMY_SETUP_PAGE.replace('{MSG}', msg)
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/html; charset=utf-8')
+                        self.end_headers()
+                        self.wfile.write(page.encode('utf-8'))
+                        return
+                    # Goi setup trong background
+                    import threading
+                    result_holder = [None]
+                    def do_auth():
+                        result_holder[0] = server_self.findmy_reader.setup_apple_auth(apple_id, password)
+                        if result_holder[0] and result_holder[0].get('status') == 'ok':
+                            server_self.findmy_reader.start_background_polling()
+                    t = threading.Thread(target=do_auth, daemon=True)
+                    t.start()
+                    t.join(timeout=45)  # Cho toi da 45 giay
+                    result = result_holder[0] or {'status': 'error', 'message': 'Timeout - thu lai'}
+                    if result.get('status') == '2fa_required':
+                        # Hien trang nhap 2FA
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/html; charset=utf-8')
+                        self.end_headers()
+                        self.wfile.write(FINDMY_2FA_PAGE.encode('utf-8'))
+                    elif result.get('status') == 'ok':
+                        msg = '<div class="msg msg-ok">&#9989; Dang nhap thanh cong! Server dang doc GPS tu Apple Find My.</div>'
+                        page = FINDMY_SETUP_PAGE.replace('{MSG}', msg)
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/html; charset=utf-8')
+                        self.end_headers()
+                        self.wfile.write(page.encode('utf-8'))
+                    else:
+                        err = result.get('message', result.get('error', str(result)))
+                        msg = f'<div class="msg msg-err">Loi: {err}</div>'
+                        page = FINDMY_SETUP_PAGE.replace('{MSG}', msg)
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/html; charset=utf-8')
+                        self.end_headers()
+                        self.wfile.write(page.encode('utf-8'))
+
+                # ── FindMy: Form 2FA submit ──
+                elif self.path == '/api/setup-findmy-2fa':
+                    import urllib.parse
+                    body_str = body.decode('utf-8', errors='replace') if isinstance(body, bytes) else body
+                    params = urllib.parse.parse_qs(body_str)
+                    code = params.get('code', [''])[0].strip()
+                    result = server_self.findmy_reader.submit_2fa(code)
+                    if result.get('status') == 'ok':
+                        server_self.findmy_reader.start_background_polling()
+                        msg = '<div class="msg msg-ok">&#9989; Xac nhan 2FA thanh cong! Find My dang hoat dong.</div>'
+                    else:
+                        err = result.get('error', str(result))
+                        msg = f'<div class="msg msg-err">Ma 2FA sai: {err}</div>'
+                    page = FINDMY_SETUP_PAGE.replace('{MSG}', msg)
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.end_headers()
+                    self.wfile.write(page.encode('utf-8'))
+
+                # ── FindMy: Dang nhap Apple ID (JSON API) ──
                 elif self.path == '/api/setup-findmy':
                     apple_id = data.get('apple_id', '')
                     password = data.get('password', '')
