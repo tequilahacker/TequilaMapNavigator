@@ -9,6 +9,7 @@ import os
 import subprocess
 import struct
 import sys
+import math
 
 # ═══════════════════════════════════════════════════
 # CẤU HÌNH KẾT NỐI (Mặc định dùng Render Cloud của bạn)
@@ -24,14 +25,119 @@ if len(sys.argv) > 1 and sys.argv[1].lower() == "local":
     SERVER_PORT = 8080
     USE_SSL     = False
 
-# Trạng thái giả lập HUD
+try:
+    import static_ffmpeg
+    HAS_STATIC_FFMPEG = True
+except ImportError:
+    HAS_STATIC_FFMPEG = False
+
+# Trạng thái giả lập HUD (Mặc định ở Thủ Đức trùng khớp với toạ độ thực tế của bạn)
 current_hud = {
-    "lat": 10.7769, "lon": 106.7009, "speed": 0, "heading": 0,
+    "lat": 10.85417, "lon": 106.78779, "speed": 0, "heading": 0,
     "speed_limit": 60, "camera_dist": 9999, "camera_type": "",
     "instruction": "Đang chờ kết nối...", "eta": 0, "distance_remain": 0.0
 }
 is_running = True
 is_typing = False
+
+# Giả lập di chuyển dọc theo lộ trình (Driving Simulator)
+simulated_route = []
+sim_index = 0
+is_simulating = False
+sim_thread = None
+available_routes = []
+
+def calculate_bearing(lat1, lon1, lat2, lon2):
+    """Tính góc hướng đi (bearing) giữa 2 tọa độ GPS."""
+    dlon = math.radians(lon2 - lon1)
+    lat1 = math.radians(lat1)
+    lat2 = math.radians(lat2)
+    
+    y = math.sin(dlon) * math.cos(lat2)
+    x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
+    
+    bearing = math.atan2(y, x)
+    bearing = math.degrees(bearing)
+    return int((bearing + 360) % 360)
+
+def send_gps_to_server(lat, lon, speed=0, heading=0):
+    """Gửi toạ độ GPS giả lập của xe lên Server để cập nhật vị trí đồng bộ."""
+    try:
+        addr = socket.getaddrinfo(SERVER_HOST, SERVER_PORT, socket.AF_INET)[0][-1]
+        s = socket.socket()
+        s.settimeout(2.0)
+        s.connect(addr)
+        if USE_SSL:
+            import ssl
+            context = ssl.create_default_context()
+            s = context.wrap_socket(s, server_hostname=SERVER_HOST)
+            
+        payload = json.dumps({
+            "lat": lat,
+            "lon": lon,
+            "speed": speed,
+            "heading": heading,
+            "accuracy": 5
+        }).encode()
+        
+        request = (
+            f"POST /api/update-gps HTTP/1.1\r\n"
+            f"Host: {SERVER_HOST}:{SERVER_PORT}\r\n"
+            f"Content-Type: application/json\r\n"
+            f"Content-Length: {len(payload)}\r\n"
+            f"Connection: close\r\n"
+            f"\r\n"
+        ).encode() + payload
+        
+        s.send(request)
+        s.close()
+    except Exception:
+        pass
+
+def simulation_loop():
+    """Luồng giả lập di chuyển xe dọc theo các điểm tọa độ của tuyến đường."""
+    global is_simulating, sim_index, simulated_route
+    print("\n🏍️ [MÔ PHỎNG LÁI XE] Đang di chuyển dọc theo tuyến đường...")
+    
+    while is_simulating and is_running:
+        if not simulated_route or sim_index >= len(simulated_route):
+            print("\n🏁 [MÔ PHỎNG LÁI XE] Đã đi tới điểm cuối hành trình!")
+            current_hud["instruction"] = "Bạn đã đến điểm đích thành công."
+            current_hud["speed"] = 0
+            is_simulating = False
+            break
+            
+        next_pt = simulated_route[sim_index]
+        next_lat, next_lon = next_pt[0], next_pt[1]
+        
+        curr_lat, curr_lon = current_hud["lat"], current_hud["lon"]
+        heading = calculate_bearing(curr_lat, curr_lon, next_lat, next_lon)
+        
+        # Di chuyển xe tới điểm tiếp theo
+        current_hud["lat"] = next_lat
+        current_hud["lon"] = next_lon
+        current_hud["heading"] = heading
+        current_hud["speed"] = 40  # Tốc độ giả định 40km/h
+        
+        # Gửi toạ độ GPS này lên Server để đồng bộ Web Map & tính khoảng cách camera phạt nguội
+        send_gps_to_server(next_lat, next_lon, speed=40, heading=heading)
+        
+        sim_index += 1
+        time.sleep(3.0)  # Cập nhật vị trí mỗi 3 giây
+
+def start_route_simulation(route_points):
+    """Bắt đầu mô phỏng lái xe dọc theo các điểm tọa độ của tuyến đường mới."""
+    global is_simulating, sim_index, simulated_route, sim_thread
+    is_simulating = False
+    if sim_thread and sim_thread.is_alive():
+        sim_thread.join(timeout=1.0)
+        
+    simulated_route = route_points
+    sim_index = 0
+    is_simulating = True
+    
+    sim_thread = threading.Thread(target=simulation_loop, daemon=True)
+    sim_thread.start()
 
 def print_hud():
     """Vẽ giao diện HUD xe máy giả lập lên Terminal."""
@@ -45,16 +151,13 @@ def print_hud():
     print(f"🧭 Hướng di chuyển: {current_hud['heading']}°")
     print("-"*60)
     
-    # Hiển thị Tốc độ và Giới hạn tốc độ
     limit_str = f"{current_hud['speed_limit']} km/h" if current_hud['speed_limit'] < 999 else "Không giới hạn"
     
-    # Đổi màu cảnh báo nếu chạy quá tốc độ
     if current_hud['speed'] > current_hud['speed_limit']:
         print(f"⚡ Tốc độ hiện tại: \033[91m{current_hud['speed']} km/h\033[0m  |  🛑 Giới hạn tốc độ: {limit_str}")
     else:
         print(f"⚡ Tốc độ hiện tại: \033[92m{current_hud['speed']} km/h\033[0m  |  🛑 Giới hạn tốc độ: {limit_str}")
     
-    # Hiển thị Cảnh báo camera phạt nguội trước 100m
     if current_hud['camera_dist'] <= 300:
         cam_name = "TỐC ĐỘ" if current_hud['camera_type'] == "speed" else "VƯỢT ĐÈN ĐỎ"
         print(f"\033[91m⚠️ [CẢNH BÁO CAMERA PHẠT NGUỘI {cam_name} CÁCH {current_hud['camera_dist']} MÉT!]\033[0m")
@@ -62,15 +165,17 @@ def print_hud():
         print("🟢 Hành trình an toàn - Không phát hiện camera phạt nguội phía trước")
         
     print("-"*60)
-    # Hiển thị Bảng chỉ đường HUD màu xanh teal (mô phỏng bảng Top bar)
     print("\033[96m┌────────────────────────────────────────────────────────┐")
     print(f"│ 🗺️ Chỉ dẫn: {current_hud['instruction'][:48].ljust(48)} │")
     print("└────────────────────────────────────────────────────────┘\033[0m")
     
-    # Hiển thị lộ trình (Bottom bar)
     print(f"🕒 Thời gian còn lại: {current_hud['eta']} phút  |  🏁 Quãng đường: {current_hud['distance_remain']} km")
     print("="*60)
-    print("💡 [NHẤN PHÍM ENTER] để mô phỏng nói 'Hey Tequila' vào Mic xe...")
+    
+    if available_routes:
+        print("💡 [NHẤN PHÍM ENTER] để chọn Tuyến đường tối ưu...")
+    else:
+        print("💡 [NHẤN PHÍM ENTER] để nói 'Hey Tequila' qua Mic MacBook...")
     print("="*60)
 
 def save_and_play_pcm(pcm_data):
@@ -83,7 +188,6 @@ def save_and_play_pcm(pcm_data):
     bits = 16
     channels = 1
     
-    # Tạo WAV Header 44 bytes
     header = struct.pack('<4sI4s4sIHHIIHH4sI',
         b'RIFF',
         len(pcm_data) + 36,
@@ -99,14 +203,9 @@ def save_and_play_pcm(pcm_data):
     )
     
     try:
-        # Ghi file wav
         with open(wav_path, "wb") as f:
             f.write(header + pcm_data)
-            
-        # Sử dụng lệnh afplay có sẵn trên macOS để phát âm thanh ra loa cực bộ
         subprocess.run(["afplay", wav_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        
-        # Cleanup
         os.remove(wav_path)
     except Exception as e:
         print("\n[Loa] Lỗi phát âm thanh cực bộ:", e)
@@ -131,7 +230,6 @@ def fetch_audio_from_server():
         ).encode()
         s.send(request)
         
-        # Nhận phản hồi
         response = bytearray()
         while True:
             chunk = s.recv(4096)
@@ -140,20 +238,21 @@ def fetch_audio_from_server():
             response.extend(chunk)
         s.close()
         
-        # Tách Header và Body
         parts = response.split(b"\r\n\r\n", 1)
         if len(parts) >= 2:
             pcm_bytes = parts[1]
             if pcm_bytes:
-                # Phát âm thanh ra loa Mac
                 save_and_play_pcm(pcm_bytes)
     except Exception as e:
         print("\n[Audio pull] Lỗi:", e)
 
 def polling_loop():
     """Vòng lặp kéo dữ liệu từ máy chủ (GET /api/poll-device) định kỳ."""
-    global is_running
+    global is_running, available_routes, is_simulating
     last_hud_print_time = 0
+    
+    # Định kỳ gửi GPS hiện tại để đồng bộ hóa ban đầu
+    send_gps_to_server(current_hud["lat"], current_hud["lon"], 0, current_hud["heading"])
     
     while is_running:
         try:
@@ -174,7 +273,6 @@ def polling_loop():
             ).encode()
             s.send(request)
             
-            # Đọc phản hồi
             response = bytearray()
             while True:
                 chunk = s.recv(2048)
@@ -183,7 +281,6 @@ def polling_loop():
                 response.extend(chunk)
             s.close()
             
-            # Parse JSON body
             parts = response.decode('utf-8', 'ignore').split("\r\n\r\n", 1)
             if len(parts) >= 2:
                 body = parts[1].strip()
@@ -192,16 +289,31 @@ def polling_loop():
                     
                     hud_changed = False
                     
-                    # Cập nhật bản đồ/tọa độ
+                    # 1. Cập nhật khi nhận được danh sách tuyến đường để chọn
+                    if "show_routes" in data and data["show_routes"]:
+                        available_routes = data["show_routes"]["routes"]
+                        current_hud["instruction"] = "Chọn tuyến đường trên Terminal..."
+                        hud_changed = True
+                    else:
+                        available_routes = []
+                    
+                    # 2. Cập nhật toạ độ và khởi động mô phỏng lái xe
                     if "update" in data and data["update"]:
                         up = data["update"]
-                        current_hud["lat"] = up.get("lat", 0.0)
-                        current_hud["lon"] = up.get("lon", 0.0)
-                        current_hud["speed"] = int(up.get("speed", 0))
-                        current_hud["heading"] = up.get("heading", 0)
+                        
+                        # Chỉ cập nhật toạ độ thủ công nếu không tự mô phỏng lái xe
+                        if not is_simulating:
+                            current_hud["lat"] = up.get("lat", 0.0)
+                            current_hud["lon"] = up.get("lon", 0.0)
+                            current_hud["speed"] = int(up.get("speed", 0))
+                            current_hud["heading"] = up.get("heading", 0)
+                        
+                        # Khởi động mô phỏng nếu có tuyến đường mới từ server
+                        if "route" in up and up["route"] and not is_simulating:
+                            start_route_simulation(up["route"])
                         hud_changed = True
                         
-                    # Cập nhật cảnh báo tốc độ/camera
+                    # 3. Cập nhật cảnh báo tốc độ/camera
                     if "alert" in data and data["alert"]:
                         al = data["alert"]
                         current_hud["speed_limit"] = al.get("speed_limit", 60)
@@ -209,23 +321,22 @@ def polling_loop():
                         current_hud["camera_type"] = al.get("camera_type", "")
                         hud_changed = True
                         
-                    # Cập nhật chỉ đường chữ và âm thanh
+                    # 4. Cập nhật chỉ đường chữ và âm thanh
                     if "voice" in data and data["voice"]:
                         vo = data["voice"]
                         current_hud["instruction"] = vo.get("text", "Đang chỉ đường...")
                         hud_changed = True
                         
-                        # Kéo âm thanh PCM về phát nếu có
+                        # Kéo âm thanh PCM về phát
                         if vo.get("has_audio"):
-                            print("\n📢 [Loa xe máy]: Nhận được gói âm thanh, đang tải về phát...")
                             fetch_audio_from_server()
                             
                     if data.get("stop"):
                         current_hud["instruction"] = "Hành trình đã dừng."
                         current_hud["speed"] = 0
+                        is_simulating = False
                         hud_changed = True
                         
-                    # Chỉ vẽ lại HUD khi có thông tin mới
                     now = time.time()
                     if hud_changed or (now - last_hud_print_time >= 3.0):
                         if not is_typing:
@@ -233,14 +344,138 @@ def polling_loop():
                         last_hud_print_time = now
                         
         except Exception:
-            # Im lặng để không làm vỡ màn hình Terminal HUD
             pass
             
         time.sleep(POLL_INTERVAL)
 
+def select_route_on_server(index):
+    """Gửi lựa chọn tuyến đường lên server."""
+    try:
+        addr = socket.getaddrinfo(SERVER_HOST, SERVER_PORT, socket.AF_INET)[0][-1]
+        s = socket.socket()
+        s.settimeout(3.0)
+        s.connect(addr)
+        if USE_SSL:
+            import ssl
+            s = ssl.create_default_context().wrap_socket(s, server_hostname=SERVER_HOST)
+            
+        payload = json.dumps({"route_index": index}).encode()
+        request = (
+            f"POST /api/select-route HTTP/1.1\r\n"
+            f"Host: {SERVER_HOST}:{SERVER_PORT}\r\n"
+            f"Content-Type: application/json\r\n"
+            f"Content-Length: {len(payload)}\r\n"
+            f"Connection: close\r\n"
+            f"\r\n"
+        ).encode() + payload
+        
+        s.send(request)
+        s.close()
+        print(f"✅ Đã gửi lựa chọn: Tuyến đường {index + 1}!")
+    except Exception as e:
+        print("❌ Lỗi chọn tuyến đường:", e)
+
+def send_raw_audio_to_server(pcm_data):
+    """Gửi âm thanh ghi âm dạng nhị phân PCM thô 16kHz lên server."""
+    print("📤 Đang gửi file âm thanh ghi âm lên Server...")
+    try:
+        addr = socket.getaddrinfo(SERVER_HOST, SERVER_PORT, socket.AF_INET)[0][-1]
+        s = socket.socket()
+        s.settimeout(12.0)
+        s.connect(addr)
+        if USE_SSL:
+            import ssl
+            context = ssl.create_default_context()
+            s = context.wrap_socket(s, server_hostname=SERVER_HOST)
+            
+        request = (
+            f"POST /api/voice-command HTTP/1.1\r\n"
+            f"Host: {SERVER_HOST}:{SERVER_PORT}\r\n"
+            f"Content-Type: application/octet-stream\r\n"
+            f"Content-Length: {len(pcm_data)}\r\n"
+            f"Connection: close\r\n"
+            f"\r\n"
+        ).encode() + pcm_data
+            
+        s.sendall(request)
+        
+        response = bytearray()
+        while True:
+            chunk = s.recv(1024)
+            if not chunk:
+                break
+            response.extend(chunk)
+        s.close()
+        print("✅ Đã gửi xong! Đang chờ Server xử lý và dịch...")
+    except Exception as e:
+        print("❌ Lỗi gửi âm thanh lên Server:", e)
+
+def record_and_send_voice():
+    """Ghi âm trực tiếp từ micro MacBook bằng avfoundation."""
+    if HAS_STATIC_FFMPEG:
+        static_ffmpeg.add_paths()
+        
+    output_path = "simulated_mic.raw"
+    if os.path.exists(output_path):
+        try: os.remove(output_path)
+        except: pass
+        
+    # Ghi âm 16kHz 16bit Mono s16le PCM dùng ffmpeg từ micro mặc định
+    cmd = [
+        "ffmpeg", "-y",
+        "-loglevel", "quiet",
+        "-f", "avfoundation",
+        "-i", ":default",
+        "-t", "5",
+        "-ar", "16000",
+        "-ac", "1",
+        "-f", "s16le",
+        "-acodec", "pcm_s16le",
+        output_path
+    ]
+    
+    try:
+        print("\n🎙️ [ĐANG THU ÂM] Hãy nói câu lệnh thoại vào Micro MacBook của bạn...")
+        print("🔴 Ghi âm tối đa 5 giây (hoặc nhấn ENTER để dừng sớm)...")
+        
+        process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        stop_event = threading.Event()
+        def wait_enter():
+            sys.stdin.readline()
+            stop_event.set()
+            
+        t = threading.Thread(target=wait_enter, daemon=True)
+        t.start()
+        
+        # Đợi phím Enter hoặc hết 5 giây
+        start_time = time.time()
+        while time.time() - start_time < 5.0:
+            if stop_event.is_set():
+                break
+            time.sleep(0.1)
+            
+        process.terminate()
+        try: process.wait(timeout=1.0)
+        except: process.kill()
+        
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
+            with open(output_path, "rb") as f:
+                pcm_data = f.read()
+            send_raw_audio_to_server(pcm_data)
+            try: os.remove(output_path)
+            except: pass
+            return True
+        else:
+            print("⚠️ Không thu được âm thanh từ Micro. Vui lòng cấp quyền Microphone cho Terminal/Python hoặc sử dụng phương thức gõ chữ.")
+            return False
+    except Exception as e:
+        print("❌ Lỗi ghi âm Microphone:", e)
+        return False
+
 def simulate_mic_input(user_command_text):
-    """Mô phỏng Microphone xe máy bằng cách gửi lệnh thoại giả lập dạng chữ lên Server."""
-    print(f"\n🗣️ Bạn nói vào mic xe: '{user_command_text}'")
+    """Gửi câu lệnh giọng nói giả định bằng text (Nhập từ bàn phím)."""
+    print(f"\n🗣️ Bạn nhập câu lệnh: '{user_command_text}'")
     print("🤖 Đang truyền lên Server xử lý...")
     
     try:
@@ -264,58 +499,95 @@ def simulate_mic_input(user_command_text):
         ).encode() + payload
             
         s.send(request)
-        response = s.recv(1024)
         s.close()
-        print("✅ Đã gửi tín hiệu! Đang chờ Server xử lý và truyền âm thanh về...")
+        print("✅ Đã gửi tín hiệu!")
     except Exception as e:
         print("❌ Lỗi gửi tín hiệu lên Server:", e)
 
 def main():
     global is_running
-    # Bắn tín hiệu Boot thông báo cho iPhone Companion
     try:
         addr = socket.getaddrinfo(SERVER_HOST, SERVER_PORT, socket.AF_INET)[0][-1]
         s = socket.socket()
         s.settimeout(2.0)
         s.connect(addr)
+        if USE_SSL:
+            import ssl
+            s = ssl.create_default_context().wrap_socket(s, server_hostname=SERVER_HOST)
         req = "POST /api/boot HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n"
         s.send(req.encode())
         s.close()
-        print("[Boot] Đã gửi thông báo Boot lên iPhone thành công!")
+        print("[Boot] Đã đồng bộ Boot lên server.")
     except Exception as e:
-        print("[Boot] Không thể gửi thông báo Boot lên iPhone:", e)
+        print("[Boot] Không thể gửi thông báo Boot:", e)
         
-    # Khởi chạy luồng Polling ngầm kéo dữ liệu từ Server
     t = threading.Thread(target=polling_loop, daemon=True)
     t.start()
     
-    # Chào đón lúc boot
     print_hud()
     
     while is_running:
         try:
-            # Đợi phím Enter kích hoạt mic
             input()
             
             global is_typing
             is_typing = True
             
-            # Cho phép gõ lệnh thoại
-            print("\033[93m🎤 Hãy nói điều bạn muốn (Simulator Mic):\033[0m")
-            print("Ví dụ: 'Đi đến Nhà thờ Đức Bà' hoặc 'Kể tôi nghe một câu chuyện cười'")
-            cmd = input("> ")
+            # Nếu đang có danh sách tuyến đường để chọn
+            if available_routes:
+                print("\033[93m🗺️ Chọn tuyến đường (Nhập 1, 2, 3... hoặc gõ 0 để HUỶ):\033[0m")
+                sel = input("> ").strip()
+                is_typing = False
+                
+                if sel == "0":
+                    try:
+                        addr = socket.getaddrinfo(SERVER_HOST, SERVER_PORT, socket.AF_INET)[0][-1]
+                        s = socket.socket()
+                        s.connect(addr)
+                        if USE_SSL:
+                            import ssl
+                            s = ssl.create_default_context().wrap_socket(s, server_hostname=SERVER_HOST)
+                        s.send(f"POST /api/stop HTTP/1.1\r\nhost: {SERVER_HOST}\r\nContent-Length: 0\r\n\r\n".encode())
+                        s.close()
+                    except: pass
+                    print_hud()
+                elif sel.isdigit():
+                    idx = int(sel) - 1
+                    if 0 <= idx < len(available_routes):
+                        select_route_on_server(idx)
+                    else:
+                        print("⚠️ Số thứ tự không hợp lệ.")
+                        time.sleep(1.0)
+                        print_hud()
+                else:
+                    print_hud()
+                continue
+                
+            # Trạng thái bình thường: Nhập lệnh thoại
+            print("\033[93m🎤 [NHẤN 1] Để nói trực tiếp (Mic MacBook) | [NHẤN 2] Nhập chữ bằng phím:\033[0m")
+            choice = input("> ").strip()
             
-            is_typing = False
-            
-            if cmd.strip():
-                if cmd.lower().strip() in ["exit", "thoát", "stop"]:
-                    is_running = False
-                    break
-                simulate_mic_input(cmd)
-                time.sleep(2.0) # Đợi tín hiệu phản hồi
-                print_hud()
+            if choice == "2":
+                print("⌨️ Nhập câu lệnh thoại của bạn:")
+                cmd = input("> ")
+                is_typing = False
+                if cmd.strip():
+                    if cmd.lower().strip() in ["exit", "thoát", "stop"]:
+                        is_running = False
+                        break
+                    simulate_mic_input(cmd)
+                    time.sleep(2.0)
+                    print_hud()
+                else:
+                    print_hud()
             else:
+                # Ghi âm thực tế
+                success = record_and_send_voice()
+                is_typing = False
+                if success:
+                    time.sleep(3.0)  # Đợi server dịch
                 print_hud()
+                
         except (KeyboardInterrupt, SystemExit):
             is_running = False
             break

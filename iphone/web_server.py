@@ -314,6 +314,7 @@ HTML_PAGE = """<!DOCTYPE html>
 <!-- Map: Always Visible -->
 <div class="map-wrapper">
   <div id="map"></div>
+  <button id="recenter-btn" onclick="recenterMap()" style="position: absolute; bottom: 16px; right: 16px; z-index: 999; background: rgba(6, 6, 12, 0.85); border: 1.5px solid var(--blue); color: var(--blue); padding: 8px 14px; border-radius: 18px; font-weight: bold; cursor: pointer; font-size: 12px; display: none; box-shadow: 0 4px 12px rgba(0, 191, 255, 0.3); transition: all 0.2s;">📍 Định vị lại</button>
 </div>
 
 <!-- Voice Reply Bubble -->
@@ -514,6 +515,9 @@ async function saveGeminiKey(key) {
   } catch(e){}
 }
 
+let mapAutoCenter = true;
+let lastSelectingRoute = false;
+
 function initMap() {
   if (map) return;
   // Mặc định trung tâm Sài Gòn
@@ -531,6 +535,25 @@ function initMap() {
   });
 
   carMarker = L.marker([10.7769, 106.7009], { icon: motoIcon }).addTo(map);
+  
+  // Detect user dragging/zooming to disable auto-centering
+  map.on('dragstart', () => {
+    mapAutoCenter = false;
+    document.getElementById('recenter-btn').style.display = 'block';
+  });
+  map.on('zoomstart', () => {
+    mapAutoCenter = false;
+    document.getElementById('recenter-btn').style.display = 'block';
+  });
+}
+
+function recenterMap() {
+  mapAutoCenter = true;
+  document.getElementById('recenter-btn').style.display = 'none';
+  if (carMarker) {
+    const latlng = carMarker.getLatLng();
+    map.setView(latlng, 15);
+  }
 }
 
 
@@ -623,9 +646,11 @@ function updateUI(d) {
       const pos = [lat, lon];
       carMarker.setLatLng(pos);
       // Zoom pan khi nhận GPS lần đầu hoặc đang dẫn đường active
-      if (d.is_navigating || !_gpsFirstFix) {
+      if (!_gpsFirstFix) {
         map.setView(pos, 15);
         _gpsFirstFix = true;
+      } else if (mapAutoCenter && d.is_navigating) {
+        map.panTo(pos);
       }
     }
   }
@@ -652,56 +677,60 @@ function updateUI(d) {
     document.getElementById('route-select-panel').style.display = 'block';
     document.getElementById('journey-panel').style.display = 'none';
     
-    // Vẽ 3 tuyến đường lên bản đồ với 3 màu khác biệt
-    clearPreviewPolylines();
-    const container = document.getElementById('routes-container');
-    container.innerHTML = '';
-    
-    const colors = ["#00bfff", "#00ff87", "#ff9900"]; // Cyan, Green, Orange
-    const bounds = L.latLngBounds();
-    
-    d.pending_routes.forEach((rt, i) => {
-      const polyCoords = rt.polyline.map(p => [p[0], p[1]]);
-      const color = colors[i] || '#ffffff';
+    if (!lastSelectingRoute || previewPolylines.length === 0) {
+      clearPreviewPolylines();
+      const container = document.getElementById('routes-container');
+      container.innerHTML = '';
       
-      const pl = L.polyline(polyCoords, {
-        color: color,
-        weight: i === 0 ? 7 : 5,
-        opacity: 0.8,
-        lineJoin: 'round'
-      }).addTo(map);
+      const colors = ["#00bfff", "#00ff87", "#ff9900"]; // Cyan, Green, Orange
+      const bounds = L.latLngBounds();
       
-      previewPolylines.push(pl);
-      polyCoords.forEach(c => bounds.extend(c));
+      d.pending_routes.forEach((rt, i) => {
+        const polyCoords = (rt.full_polyline || rt.polyline).map(p => [p[0], p[1]]);
+        const color = colors[i] || '#ffffff';
+        
+        const pl = L.polyline(polyCoords, {
+          color: color,
+          weight: i === 0 ? 7 : 5,
+          opacity: 0.8,
+          lineJoin: 'round'
+        }).addTo(map);
+        
+        previewPolylines.push(pl);
+        polyCoords.forEach(c => bounds.extend(c));
+        
+        // Tạo HTML Card cho tuyến đường này
+        container.innerHTML += `
+          <div class="route-option" onclick="selectRoute(${rt.index})">
+            <div class="route-header">
+              <span class="route-label" style="color: ${color}">
+                <span style="font-size: 16px">${i === 0 ? '🏆' : '📍'}</span>
+                ${rt.label}
+              </span>
+              <span class="route-meta">${rt.summary}</span>
+            </div>
+            <div class="route-stats">
+              <div class="route-stat">📏 ${rt.total_distance_km} km</div>
+              <div class="route-stat">⏱️ ${rt.total_duration_min} phút</div>
+            </div>
+            <div class="route-stats" style="font-size: 11px; color: var(--sub); margin-top: 4px;">
+              <div class="route-stat">⚡ Tốc độ tối đa: ${rt.max_speed} km/h</div>
+              <div class="route-stat">📷 Camera phạt nguội: ${rt.camera_count}</div>
+            </div>
+          </div>
+        `;
+      });
       
-      // Tạo HTML Card cho tuyến đường này
-      container.innerHTML += `
-        <div class="route-option" onclick="selectRoute(${rt.index})">
-          <div class="route-header">
-            <span class="route-label" style="color: ${color}">
-              <span style="font-size: 16px">${i === 0 ? '🏆' : '📍'}</span>
-              ${rt.label}
-            </span>
-            <span class="route-meta">${rt.summary}</span>
-          </div>
-          <div class="route-stats">
-            <div class="route-stat">📏 ${rt.total_distance_km} km</div>
-            <div class="route-stat">⏱️ ${rt.total_duration_min} phút</div>
-          </div>
-          <div class="route-stats" style="font-size: 11px; color: var(--sub); margin-top: 4px;">
-            <div class="route-stat">⚡ Tốc độ tối đa: ${rt.max_speed} km/h</div>
-            <div class="route-stat">📷 Camera phạt nguội: ${rt.camera_count}</div>
-          </div>
-        </div>
-      `;
-    });
-    
-    if (previewPolylines.length > 0) {
-      map.fitBounds(bounds, { padding: [40, 40] });
+      if (previewPolylines.length > 0 && mapAutoCenter) {
+        map.fitBounds(bounds, { padding: [40, 40] });
+      }
     }
     
+    lastSelectingRoute = true;
     return;
   }
+  
+  lastSelectingRoute = false;
 
   // 4. Trạng thái 2: Đang điều hướng chủ động
   if (d.is_navigating) {
