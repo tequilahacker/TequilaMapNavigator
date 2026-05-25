@@ -859,7 +859,7 @@ async function optimizeRoute() {
   });
   const d = await r.json();
   if (d.optimized_order) {
-    alert('Thứ tự tối ưu AI:\n' + d.optimized_order.join(' → '));
+    alert('Thứ tự tối ưu AI:\\n' + d.optimized_order.join(' → '));
   }
 }
 
