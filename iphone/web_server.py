@@ -1448,8 +1448,7 @@ class NavigatorWebServer:
 
                 # ─── GPS tu iPhone Shortcuts (GET request) ───
                 elif self.path.startswith('/api/update-gps?') or (self.path == '/api/update-gps' and 'lat' in self.path):
-                    import urllib.parse as _up
-                    _qs = _up.parse_qs(_up.urlparse(self.path).query)
+                    _qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
                     _lat = float(_qs.get('lat',['0'])[0])
                     _lon = float(_qs.get('lon',['0'])[0])
                     _spd = float(_qs.get('speed',['0'])[0])
@@ -1817,7 +1816,6 @@ class NavigatorWebServer:
 
                 # ── FindMy: Form-based setup (khong can JS, redirect sau khi xong) ──
                 elif self.path == '/api/setup-findmy-form':
-                    import urllib.parse
                     body_str = body.decode('utf-8', errors='replace') if isinstance(body, bytes) else body
                     params = urllib.parse.parse_qs(body_str)
                     apple_id = params.get('apple_id', [''])[0].strip()
@@ -1832,7 +1830,6 @@ class NavigatorWebServer:
                         self.wfile.write(page.encode('utf-8'))
                         return
                     # Goi setup trong background
-                    import threading
                     result_holder = [None]
                     def do_auth():
                         result_holder[0] = server_self.findmy_reader.setup_apple_auth(apple_id, password)
@@ -1866,7 +1863,6 @@ class NavigatorWebServer:
 
                 # ── FindMy: Form 2FA submit ──
                 elif self.path == '/api/setup-findmy-2fa':
-                    import urllib.parse
                     body_str = body.decode('utf-8', errors='replace') if isinstance(body, bytes) else body
                     params = urllib.parse.parse_qs(body_str)
                     code = params.get('code', [''])[0].strip()
@@ -1890,7 +1886,6 @@ class NavigatorWebServer:
                     if not apple_id or not password:
                         self.send_json({"status": "error", "message": "Thieu apple_id hoac password"})
                         return
-                    import threading
                     def do_auth():
                         result = server_self.findmy_reader.setup_apple_auth(apple_id, password)
                         if result.get("status") == "ok":

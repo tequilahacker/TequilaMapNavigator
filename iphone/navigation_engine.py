@@ -7,12 +7,15 @@ import math
 
 try:
     import requests    # Pythonista có requests built-in
-    import location    # iOS GPS
-    HAS_LIBS = True
 except ImportError:
-    HAS_LIBS = False
     requests = None
+
+try:
+    import location    # iOS GPS
+except ImportError:
     location = None
+
+HAS_LIBS = (requests is not None) and (location is not None)
 
 
 class NavigationEngine:
@@ -480,14 +483,21 @@ class NavigationEngine:
     
     def _mock_route(self, origin_lat, origin_lon):
         """Mock route data cho testing không có mạng."""
+        mock_poly = [
+            (origin_lat, origin_lon),
+            (origin_lat + 0.001, origin_lon + 0.001),
+            (origin_lat + 0.002, origin_lon + 0.003),
+            (origin_lat + 0.004, origin_lon + 0.003),
+        ]
         return {
             "status": "OK",
-            "polyline": [
-                (origin_lat, origin_lon),
-                (origin_lat + 0.001, origin_lon + 0.001),
-                (origin_lat + 0.002, origin_lon + 0.003),
-                (origin_lat + 0.004, origin_lon + 0.003),
-            ],
+            "index": 0,
+            "label": "🏃 Tuyến giả lập",
+            "color": "#00bfff",
+            "summary": "Tuyến giả lập offline",
+            "polyline": mock_poly,
+            "full_polyline": mock_poly,
+            "dest_name": "Điểm giả lập",
             "steps": [
                 {"instruction": "Đi thẳng 200m", "distance_m": 200, "duration_s": 30,
                  "lat": origin_lat + 0.002, "lon": origin_lon + 0.002, "maneuver": "straight"},
