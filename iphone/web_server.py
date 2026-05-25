@@ -298,15 +298,7 @@ HTML_PAGE = """<!DOCTYPE html>
   </div>
 </div>
 
-<!-- Nut setup Find My (noi bat, de bam tren mobile) -->
-<div id="findmy-btn-bar" style="padding:6px 16px 0 16px;">
-  <button onclick="toggleFindMyPanel()" id="findmy-main-btn"
-    style="width:100%;padding:10px;background:linear-gradient(135deg,#1a1a3e,#2a2a5e);
-           border:1.5px solid #4a90d9;border-radius:10px;color:#4a90d9;
-           font-size:13px;font-weight:600;cursor:pointer;letter-spacing:0.5px;">
-    🍎 Kết nối Apple Find My (Bấm để setup)
-  </button>
-</div>
+
 
 <!-- Map: Always Visible -->
 <div class="map-wrapper">
@@ -338,15 +330,19 @@ HTML_PAGE = """<!DOCTYPE html>
   </div>
 </div>
 
-<!-- Apple Find My Setup Panel -->
-<div class="card" id="findmy-panel" style="display:none; border: 2px solid #4a90d9;">
-  <div class="card-title" style="color:#4a90d9;">🔑 Kết Nối Apple Find My</div>
-  <p style="color:#aaa; font-size:12px; margin:0 0 12px 0;">
-    Đăng nhập Apple ID để server tự động đọc GPS từ app Tìm — không cần mở Safari nữa.
+<!-- Apple Find My Setup Panel - dung <details> thuan HTML, khong can JS toggle -->
+<details class="card" id="findmy-panel" style="border:2px solid #4a90d9; cursor:pointer;">
+  <summary style="color:#4a90d9; font-size:14px; font-weight:700; padding:4px 0; list-style:none; display:flex; align-items:center; gap:8px;">
+    <span id="findmy-summary-dot" style="width:10px;height:10px;border-radius:50%;background:#555;display:inline-block;"></span>
+    🍎 Kết Nối Apple Find My — Bấm để mở/đóng
+  </summary>
+
+  <p style="color:#aaa; font-size:12px; margin:10px 0;">
+    Đăng nhập Apple ID 1 lần → server tự đọc GPS từ app Tìm, không cần mở Safari nữa.
   </p>
 
   <div id="findmy-form-area">
-    <input type="email" id="apple-id-input" placeholder="Apple ID (email)" 
+    <input type="email" id="apple-id-input" placeholder="Apple ID (email)"
            style="width:100%;box-sizing:border-box;background:#1a1a2e;color:#eee;border:1px solid #4a90d9;border-radius:8px;padding:10px;font-size:14px;margin-bottom:8px;">
     <input type="password" id="apple-pw-input" placeholder="Mật khẩu Apple ID"
            style="width:100%;box-sizing:border-box;background:#1a1a2e;color:#eee;border:1px solid #4a90d9;border-radius:8px;padding:10px;font-size:14px;margin-bottom:12px;">
@@ -355,21 +351,18 @@ HTML_PAGE = """<!DOCTYPE html>
     </button>
   </div>
 
-  <div id="findmy-2fa-area" style="display:none;">
-    <p style="color:#f0a500; font-size:13px;">📱 Apple gửi mã xác nhận về iPhone của bạn.</p>
-    <input type="text" id="findmy-2fa-input" placeholder="Nhập 6 chữ số 2FA"
-           maxlength="6" style="width:100%;box-sizing:border-box;background:#1a1a2e;color:#eee;border:1px solid #f0a500;border-radius:8px;padding:10px;font-size:18px;text-align:center;letter-spacing:8px;margin-bottom:12px;">
+  <div id="findmy-2fa-area" style="display:none; margin-top:10px;">
+    <p style="color:#f0a500; font-size:13px; margin:0 0 8px 0;">📱 Apple đã gửi mã 6 số về iPhone của bạn.</p>
+    <input type="text" id="findmy-2fa-input" placeholder="- - - - - -"
+           maxlength="6" inputmode="numeric"
+           style="width:100%;box-sizing:border-box;background:#1a1a2e;color:#eee;border:1px solid #f0a500;border-radius:8px;padding:12px;font-size:22px;text-align:center;letter-spacing:12px;margin-bottom:12px;">
     <button class="btn btn-success" onclick="submit2FA()" style="width:100%;">
-      ✅ Xác nhận 2FA
+      ✅ Xác nhận mã 2FA
     </button>
   </div>
 
-  <div id="findmy-status-msg" style="color:#00ff87;font-size:12px;margin-top:10px;display:none;"></div>
-  <button onclick="document.getElementById('findmy-panel').style.display='none'" 
-          style="background:none;border:none;color:#666;margin-top:8px;cursor:pointer;font-size:12px;">
-    Đóng
-  </button>
-</div>
+  <div id="findmy-status-msg" style="font-size:13px;margin-top:10px;padding:8px;border-radius:6px;display:none;"></div>
+</details>
 
 <!-- 3 Alternatives Route Selection Panel -->
 <div class="card" id="route-select-panel">
