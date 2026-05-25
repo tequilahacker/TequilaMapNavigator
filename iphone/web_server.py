@@ -870,42 +870,89 @@ FINDMY_SETUP_PAGE = '''<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Tequila Map - Ket noi Apple Find My</title>
+<title>Tequila Map - Setup GPS iPhone</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0d0d1a;color:#eee;font-family:-apple-system,BlinkMacSystemFont,sans-serif;
-     display:flex;flex-direction:column;align-items:center;padding:30px 20px;min-height:100vh}
-.card{background:#12122a;border:1.5px solid #4a90d9;border-radius:16px;
-      padding:24px;width:100%;max-width:420px;margin-bottom:16px}
-h1{color:#4a90d9;font-size:20px;margin-bottom:6px}
-p{color:#aaa;font-size:13px;line-height:1.6;margin-bottom:16px}
-input{width:100%;padding:12px;background:#1a1a3e;color:#eee;
-      border:1px solid #4a90d9;border-radius:10px;font-size:15px;margin-bottom:10px}
-button{width:100%;padding:14px;background:#4a90d9;color:#fff;
-       border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer}
-button:active{opacity:0.8}
-.msg{padding:12px;border-radius:10px;font-size:13px;text-align:center}
-.msg-warn{background:#2a1a00;color:#f0a500;border:1px solid #f0a500}
-.msg-ok{background:#0a2a0a;color:#00ff87;border:1px solid #00ff87}
-.msg-err{background:#2a0a0a;color:#ff4444;border:1px solid #ff4444}
-a{color:#4a90d9;font-size:14px}
-.back{margin-top:20px;text-align:center}
+     padding:24px 18px;min-height:100vh}
+.card{background:#12122a;border-radius:16px;padding:20px;margin-bottom:14px}
+.card-blue{border:1.5px solid #4a90d9}
+.card-green{border:1.5px solid #00cc66}
+.card-orange{border:1.5px solid #f0a500}
+h1{color:#4a90d9;font-size:18px;margin-bottom:8px}
+h2{font-size:15px;margin-bottom:10px}
+p,li{color:#aaa;font-size:13px;line-height:1.7}
+ol{padding-left:18px;margin-bottom:12px}
+li{margin-bottom:6px}
+.highlight{color:#00ff87;font-weight:700}
+.url{background:#0a0a20;color:#4a90d9;padding:8px 12px;border-radius:8px;
+     font-size:13px;word-break:break-all;margin:8px 0;display:block}
+.step{background:#1a1a3e;border-radius:10px;padding:12px;margin-bottom:8px}
+.step-num{color:#4a90d9;font-weight:700;font-size:16px}
+.note{background:#1a1200;border:1px solid #f0a500;border-radius:8px;
+      padding:10px;color:#f0a500;font-size:12px;margin-top:10px}
+a.btn{display:block;padding:13px;background:#00cc66;color:#000;font-weight:700;
+      border-radius:10px;text-align:center;text-decoration:none;font-size:15px;margin:10px 0}
+a.back{color:#4a90d9;font-size:13px;display:block;text-align:center;margin-top:16px}
+{MSG_STYLE}
 </style>
 </head>
 <body>
-<div class="card">
-  <h1>&#127822; Ket Noi Apple Find My</h1>
-  <p>Dang nhap Apple ID 1 lan. Server tu doc GPS tu app Tim - khong can mo Safari nua.</p>
-  {MSG}
-  <form method="POST" action="/api/setup-findmy-form">
-    <input type="email" name="apple_id" placeholder="Apple ID (email)" required autocomplete="email">
-    <input type="password" name="password" placeholder="Mat khau Apple ID" required autocomplete="current-password">
-    <button type="submit">&#127822; Dang nhap Apple ID</button>
-  </form>
+{MSG}
+
+<div class="card card-blue">
+  <h1>&#128241; GPS tu Dong qua iPhone Shortcuts</h1>
+  <p>Khong can dang nhap gi ca. Tao 1 Shortcut tren iPhone de tu dong gui GPS len server.</p>
 </div>
-<div class="back"><a href="/">&larr; Quay lai ban do</a></div>
+
+<div class="card card-green">
+  <h2>&#9989; Buoc 1 - Tao Shortcut GPS</h2>
+  <ol>
+    <li>Mo app <span class="highlight">Phim Tat (Shortcuts)</span> tren iPhone</li>
+    <li>Bam dau <span class="highlight">+</span> goc tren phai</li>
+    <li>Bam <span class="highlight">Them Hanh Dong</span></li>
+    <li>Tim va chon: <span class="highlight">Lay Vi Tri Hien Tai</span></li>
+    <li>Bam <span class="highlight">+</span> them hanh dong thu 2</li>
+    <li>Tim va chon: <span class="highlight">Lay Noi Dung URL</span></li>
+    <li>Dien URL nhu sau:</li>
+  </ol>
+  <code class="url">https://tequilamap.onrender.com/api/update-gps?lat=[Latitude]&lon=[Longitude]&source=shortcut</code>
+  <p style="color:#aaa;font-size:12px;margin-top:6px;">
+    [Latitude] va [Longitude]: bam vao o URL, bam bien so do, chon <b>Vi Tri > Vi Do / Kinh Do</b>
+  </p>
+  <li style="margin-top:8px;color:#aaa;font-size:13px;">8. Dat ten Shortcut la <span class="highlight">Tequila GPS</span> roi bam Xong</li>
+</div>
+
+<div class="card card-orange">
+  <h2>&#9203; Buoc 2 - Cai Dat Tu Dong Chay</h2>
+  <ol>
+    <li>Trong app Phim Tat, chuyen sang tab <span class="highlight">Tu Dong Hoa</span></li>
+    <li>Bam dau <span class="highlight">+</span></li>
+    <li>Chon <span class="highlight">Thoi Gian</span></li>
+    <li>Chon <span class="highlight">Lap Lai</span> → moi <span class="highlight">1 Phut</span></li>
+    <li>Bam <span class="highlight">Tiep Theo</span> → chon <span class="highlight">Tequila GPS</span></li>
+    <li>TAT "Hoi Truoc Khi Chay" → bam <span class="highlight">Xong</span></li>
+  </ol>
+  <div class="note">
+    Shortcut tu dong chay ngam moi 1 phut, gui GPS len server.<br>
+    Khong can mo app, khong can man hinh bat sang.
+  </div>
+</div>
+
+<div class="card" style="border:1px solid #333;">
+  <h2 style="color:#aaa;">&#128640; Ket Qua</h2>
+  <p>Sau khi cai Shortcut:
+    <br>&#10003; Server nhan GPS tu iPhone moi 1 phut
+    <br>&#10003; Ban do ESP32 cap nhat tu dong
+    <br>&#10003; Camera, toc do, canh bao hoat dong binh thuong
+    <br>&#10003; Khong can mo Safari, khong can gi them
+  </p>
+</div>
+
+<a href="/" class="back">&larr; Quay lai ban do</a>
 </body>
 </html>'''
+
 
 FINDMY_2FA_PAGE = '''<!DOCTYPE html>
 <html lang="vi">
@@ -1362,6 +1409,26 @@ class NavigatorWebServer:
                     self.send_header('Content-Type', 'text/html; charset=utf-8')
                     self.end_headers()
                     self.wfile.write(page.encode('utf-8'))
+
+                # ─── GPS tu iPhone Shortcuts (GET request) ───
+                elif self.path.startswith('/api/update-gps?') or (self.path == '/api/update-gps' and 'lat' in self.path):
+                    import urllib.parse as _up
+                    _qs = _up.parse_qs(_up.urlparse(self.path).query)
+                    _lat = float(_qs.get('lat',['0'])[0])
+                    _lon = float(_qs.get('lon',['0'])[0])
+                    _spd = float(_qs.get('speed',['0'])[0])
+                    _hdg = float(_qs.get('heading',['0'])[0])
+                    if _lat != 0 and _lon != 0:
+                        server_self.update_status(
+                            gps_lat=_lat, gps_lon=_lon,
+                            speed_kmh=_spd, wifi_connected=True
+                        )
+                        print(f'[Shortcut GPS] {_lat:.5f},{_lon:.5f}')
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(b'{"status":"ok","source":"shortcut"}')
 
                 elif self.path == '/api/status':
                     # Lấy GPS real-time cập nhật vào status
