@@ -10,6 +10,8 @@ import subprocess
 import struct
 import sys
 import math
+import select
+import shutil
 
 # ═══════════════════════════════════════════════════
 # CẤU HÌNH KẾT NỐI (Mặc định dùng Render Cloud của bạn)
@@ -46,6 +48,10 @@ sim_index = 0
 is_simulating = False
 sim_thread = None
 available_routes = []
+
+def check_ffmpeg():
+    """Kiểm tra xem ffmpeg có sẵn trên hệ thống hay không."""
+    return shutil.which("ffmpeg") is not None
 
 def calculate_bearing(lat1, lon1, lat2, lon2):
     """Tính góc hướng đi (bearing) giữa 2 tọa độ GPS."""
@@ -146,6 +152,9 @@ def print_hud():
     print("   🏍️  TEQUILA MOTORCYCLE NAVIGATOR - ESP32 SIMULATOR (macOS)")
     print("="*60)
     print(f"Trạng thái liên kết: {'ĐÁM MÂY ☁️' if USE_SSL else 'CỤC BỘ 📱'} | Máy chủ: {SERVER_HOST}:{SERVER_PORT}")
+    has_mic = check_ffmpeg()
+    mic_status = "\033[92mSẴN SÀNG ✅\033[0m" if has_mic else "\033[91mTHIẾU FFMPEG ❌ (Dùng phím 2 để nhập chữ)\033[0m"
+    print(f"🎤 Micro máy Mac    : {mic_status}")
     print("-"*60)
     print(f"📍 GPS hiện tại : {current_hud['lat']:.6f}, {current_hud['lon']:.6f}")
     print(f"🧭 Hướng di chuyển: {current_hud['heading']}°")
@@ -412,6 +421,12 @@ def send_raw_audio_to_server(pcm_data):
 
 def record_and_send_voice():
     """Ghi âm trực tiếp từ micro MacBook bằng avfoundation."""
+    if not check_ffmpeg():
+        print("\n❌ Không tìm thấy 'ffmpeg' trên hệ thống của bạn!")
+        print("💡 Vui lòng chờ Homebrew cài đặt ffmpeg xong, hoặc sử dụng [NHẤN 2] để nhập bằng bàn phím.")
+        input("\nNhấn Enter để quay lại...")
+        return False
+
     if HAS_STATIC_FFMPEG:
         static_ffmpeg.add_paths()
         
@@ -434,6 +449,13 @@ def record_and_send_voice():
         output_path
     ]
     
+    # Xóa sạch bộ đệm stdin trước khi bắt đầu để tránh Enter cũ kích hoạt dừng sớm
+    try:
+        while select.select([sys.stdin], [], [], 0.0)[0]:
+            sys.stdin.readline()
+    except Exception:
+        pass
+        
     try:
         print("\n🎙️ [ĐANG THU ÂM] Hãy nói câu lệnh thoại vào Micro MacBook của bạn...")
         print("🔴 Ghi âm tối đa 5 giây (hoặc nhấn ENTER để dừng sớm)...")
@@ -467,10 +489,13 @@ def record_and_send_voice():
             except: pass
             return True
         else:
-            print("⚠️ Không thu được âm thanh từ Micro. Vui lòng cấp quyền Microphone cho Terminal/Python hoặc sử dụng phương thức gõ chữ.")
+            print("\n⚠️ Không thu được âm thanh từ Micro hoặc file ghi âm quá nhỏ.")
+            print("💡 Hãy kiểm tra quyền truy cập Microphone của Terminal/Python trong System Settings > Privacy & Security > Microphone.")
+            input("\nNhấn Enter để quay lại...")
             return False
     except Exception as e:
-        print("❌ Lỗi ghi âm Microphone:", e)
+        print(f"\n❌ Lỗi ghi âm Microphone: {e}")
+        input("\nNhấn Enter để quay lại...")
         return False
 
 def simulate_mic_input(user_command_text):
@@ -580,12 +605,17 @@ def main():
                     print_hud()
                 else:
                     print_hud()
-            else:
+            elif choice == "1" or choice == "":
                 # Ghi âm thực tế
                 success = record_and_send_voice()
                 is_typing = False
                 if success:
                     time.sleep(3.0)  # Đợi server dịch
+                print_hud()
+            else:
+                print("⚠️ Lựa chọn không hợp lệ. Nhập 1 hoặc 2!")
+                is_typing = False
+                time.sleep(1.0)
                 print_hud()
                 
         except (KeyboardInterrupt, SystemExit):
