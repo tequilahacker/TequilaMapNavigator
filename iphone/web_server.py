@@ -272,8 +272,8 @@ HTML_PAGE = """<!DOCTYPE html>
   #route-select-panel { display: none; }
   #journey-panel { display: none; }
 </style>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<link rel="stylesheet" href="/leaflet.css" />
+<script src="/leaflet.js"></script>
 </head>
 <body>
 
@@ -1399,6 +1399,28 @@ class NavigatorWebServer:
                     self.send_header('Content-Type', 'text/html; charset=utf-8')
                     self.end_headers()
                     self.wfile.write(HTML_PAGE.encode('utf-8'))
+
+                elif self.path == '/leaflet.css':
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/css')
+                    self.end_headers()
+                    try:
+                        with open('iphone/leaflet.css', 'rb') as f:
+                            self.wfile.write(f.read())
+                    except Exception as e:
+                        print("[WebServer] Loi doc file leaflet.css:", e)
+                        self.wfile.write(b"")
+
+                elif self.path == '/leaflet.js':
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/javascript')
+                    self.end_headers()
+                    try:
+                        with open('iphone/leaflet.js', 'rb') as f:
+                            self.wfile.write(f.read())
+                    except Exception as e:
+                        print("[WebServer] Loi doc file leaflet.js:", e)
+                        self.wfile.write(b"")
 
                 # ─── Trang setup Apple Find My (khong can JS) ───
                 elif self.path == '/setup-findmy':
