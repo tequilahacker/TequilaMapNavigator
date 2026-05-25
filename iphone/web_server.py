@@ -1982,8 +1982,18 @@ class NavigatorWebServer:
                     
                 elif self.path == '/api/update-gps':
                     # Định vị gửi từ trình duyệt điện thoại Safari (tiện lợi khi chạy Cloud)
-                    lat = data.get("lat")
-                    lon = data.get("lon")
+                    # Auto-fix decimal bi mat khi iOS Shortcuts dung kieu "So" (Number)
+                    def _fix_coord(v, is_lat=True):
+                        if v is None: return None
+                        try: v = float(str(v).replace(',', '.'))
+                        except: return None
+                        if is_lat and v > 90:   # VN lat 2 chu so
+                            s = str(int(v)); v = float(s[:2] + '.' + s[2:])
+                        elif not is_lat and v > 180:  # VN lon 3 chu so
+                            s = str(int(v)); v = float(s[:3] + '.' + s[3:])
+                        return v
+                    lat = _fix_coord(data.get("lat"), is_lat=True)
+                    lon = _fix_coord(data.get("lon"), is_lat=False)
                     speed = data.get("speed", 0)
                     heading = data.get("heading", 0)
                     if lat and lon:
