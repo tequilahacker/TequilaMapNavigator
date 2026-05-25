@@ -37,7 +37,8 @@ except ImportError:
 current_hud = {
     "lat": 10.85417, "lon": 106.78779, "speed": 0, "heading": 0,
     "speed_limit": 60, "camera_dist": 9999, "camera_type": "",
-    "instruction": "Đang chờ kết nối...", "eta": 0, "distance_remain": 0.0
+    "instruction": "Đang chờ kết nối...", "eta": 0, "distance_remain": 0.0,
+    "motorcycle_banned_warning": ""
 }
 is_running = True
 is_typing = False
@@ -172,6 +173,9 @@ def print_hud():
         print(f"\033[91m⚠️ [CẢNH BÁO CAMERA PHẠT NGUỘI {cam_name} CÁCH {current_hud['camera_dist']} MÉT!]\033[0m")
     else:
         print("🟢 Hành trình an toàn - Không phát hiện camera phạt nguội phía trước")
+        
+    if current_hud.get("motorcycle_banned_warning"):
+        print(f"\033[91m\033[5m{current_hud['motorcycle_banned_warning'].upper()} - QUAY LẠI NGAY!\033[0m")
         
     print("-"*60)
     print("\033[96m┌────────────────────────────────────────────────────────┐")
@@ -328,6 +332,7 @@ def polling_loop():
                         current_hud["speed_limit"] = al.get("speed_limit", 60)
                         current_hud["camera_dist"] = al.get("camera_dist", 9999)
                         current_hud["camera_type"] = al.get("camera_type", "")
+                        current_hud["motorcycle_banned_warning"] = al.get("motorcycle_banned_warning", "")
                         hud_changed = True
                         
                     # 4. Cập nhật chỉ đường chữ và âm thanh

@@ -260,7 +260,8 @@ class TequilaNavigatorWiFiIOS:
                     "current_speed": speed,
                     "speed_over": speed_over,
                     "camera_dist": alert_packet.get("camera_alert", {}).get("distance_m", 9999) if alert_packet.get("camera_alert") else 9999,
-                    "camera_type": alert_packet.get("camera_alert", {}).get("type", "speed") if alert_packet.get("camera_alert") else "speed"
+                    "camera_type": alert_packet.get("camera_alert", {}).get("type", "speed") if alert_packet.get("camera_alert") else "speed",
+                    "motorcycle_banned_warning": alert_packet.get("motorcycle_banned_warning", "")
                 }
                 self.send_to_esp32("alert", alert_payload)
                 
@@ -270,7 +271,8 @@ class TequilaNavigatorWiFiIOS:
                     dist_to_turn=dist_turn,
                     eta_min=alert_packet.get("eta_seconds", 0) // 60 or self.server.status.get("eta_min"),
                     dist_remain_km=alert_packet.get("dist_remain_km") or self.server.status.get("dist_remain_km"),
-                    camera_warning=alert_packet.get("camera_alert", {}).get("desc") if alert_packet.get("camera_alert") else None
+                    camera_warning=alert_packet.get("camera_alert", {}).get("desc") if alert_packet.get("camera_alert") else None,
+                    motorcycle_banned_warning=alert_packet.get("motorcycle_banned_warning", "")
                 )
                 
                 # 5. Kiểm tra điều kiện đã đến đích để tự động thoát

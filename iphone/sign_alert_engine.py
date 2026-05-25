@@ -5,43 +5,41 @@
 import math
 import json
 
-# ─── Giới hạn tốc độ mặc định theo Luật GTĐB Việt Nam (Nghị định 46/2016) ───
+# ─── Giới hạn tốc độ mặc định theo Luật GTĐB Việt Nam cho XE MÁY ───
 VN_DEFAULT_SPEED_LIMITS = {
     # Trong đô thị (khu dân cư)
-    "residential":    60,   # Đường khu dân cư
+    "residential":    50,   # Đường khu dân cư (xe máy mặc định 50-60 km/h)
     "living_street":  20,   # Ngõ, hẻm nhỏ
     "service":        20,   # Đường nội bộ
     # Ngoài đô thị
-    "primary":        80,   # Quốc lộ
-    "secondary":      80,   # Tỉnh lộ
-    "tertiary":       60,   # Đường huyện
-    "unclassified":   60,   # Đường chưa phân loại
-    # Cao tốc / đường lớn
-    "motorway":       120,  # Đường cao tốc
-    "motorway_link":  80,
-    "trunk":          100,  # Đường cao tốc thấp
-    "trunk_link":     80,
+    "primary":        60,   # Quốc lộ ngoài đô thị (xe máy 60-70 km/h)
+    "secondary":      50,   # Tỉnh lộ
+    "tertiary":       50,   # Đường huyện
+    "unclassified":   50,   # Đường chưa phân loại
+    # Cao tốc / đường lớn (CẤM XE MÁY)
+    "motorway":       0,    # Cao tốc
+    "motorway_link":  0,
+    "trunk":          70,   # Đường cao tốc thấp / quốc lộ lớn (xe máy tối đa 70-80 km/h)
+    "trunk_link":     60,
     # Đặc biệt
     "school_zone":    40,   # Gần trường học (buffer 100m)
     "hospital_zone":  40,   # Gần bệnh viện
     "market_zone":    40,   # Gần chợ, đông người
 }
 
-# ─── Biển báo cần đọc to ───
+# ─── Biển báo cần đọc to cho xe máy ───
 SIGN_ANNOUNCEMENTS = {
     "school_zone":    "Chú ý! Khu vực trường học, giảm tốc xuống 40 km/h.",
     "hospital_zone":  "Khu vực bệnh viện, giảm tốc độ và không bấm còi.",
-    "residential":    "Vào khu dân cư. Giới hạn tốc độ 60 km/h.",
-    "highway_enter":  "Vào đường cao tốc. Tốc độ tối thiểu 60, tối đa 120 km/h.",
-    "highway_exit":   "Ra khỏi đường cao tốc. Giảm tốc độ.",
+    "residential":    "Vào khu dân cư. Giới hạn tốc độ 50 km/h.",
+    "highway_enter":  "Cảnh báo! Phía trước là đường cao tốc cấm xe máy, hãy quay lại ngay!",
+    "highway_exit":   "Ra khỏi đường cao tốc.",
     "no_overtaking":  "Cấm vượt xe. Giữ nguyên làn đường.",
     "speed_30":       "Khu vực giới hạn 30 km/h.",
     "speed_40":       "Khu vực giới hạn 40 km/h.",
     "speed_60":       "Giới hạn tốc độ 60 km/h.",
     "speed_80":       "Giới hạn tốc độ 80 km/h.",
-    "speed_100":      "Giới hạn tốc độ 100 km/h.",
-    "speed_120":      "Giới hạn tốc độ 120 km/h.",
-    "toll_booth":     "Sắp đến trạm thu phí. Chuẩn bị dừng hoặc đi qua làn ETC.",
+    "toll_booth":     "Sắp đến trạm thu phí, hãy đi vào làn xe máy bên phải.",
     "roundabout":     "Sắp vào vòng xuyến. Nhường đường xe đang lưu thông trong vòng.",
     "narrow_road":    "Đường hẹp phía trước. Nhường đường xe ngược chiều.",
     "bridge":         "Đang qua cầu. Không dừng đỗ trên cầu.",
@@ -152,17 +150,21 @@ class SignAlertEngine:
     # ─────────────────────────────────────────────
     def _get_speed_limit(self, lat, lon, road_type="residential"):
         """Lấy giới hạn tốc độ theo thứ tự ưu tiên."""
+        limit = None
         # 1. OSM snap-to-road
         if self.osm:
             try:
                 limit, _ = self.osm.get_speed_limit_at(lat, lon)
-                if limit:
-                    return limit
             except Exception:
                 pass
 
-        # 2. VN Law default theo loại đường
-        return VN_DEFAULT_SPEED_LIMITS.get(road_type, 60)
+        if not limit:
+            # 2. VN Law default theo loại đường
+            limit = VN_DEFAULT_SPEED_LIMITS.get(road_type, 50)
+
+        if limit > 80:
+            limit = 80
+        return limit
 
     # ─────────────────────────────────────────────
     # SPECIAL ZONE DETECTION

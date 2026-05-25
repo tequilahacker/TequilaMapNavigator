@@ -24,6 +24,7 @@ OVERPASS_ENDPOINTS = [
 CACHE_DIR = os.path.expanduser("~/Documents/tequila_cache")
 CAMERA_CACHE_FILE = os.path.join(CACHE_DIR, "osm_cameras_vn.json")
 SPEEDLIMIT_CACHE_FILE = os.path.join(CACHE_DIR, "osm_speedlimits_vn.json")
+BANNEDWAY_CACHE_FILE = os.path.join(CACHE_DIR, "osm_bannedways_vn.json")
 
 # Bounding box Việt Nam
 VN_BBOX = "8.0,102.0,23.5,110.0"  # south,west,north,east
@@ -35,6 +36,7 @@ class OSMSpeedEngine:
     def __init__(self):
         self.cameras = []           # List of {lat, lon, type, speed_limit, name}
         self.speed_ways = []        # List of road segments with speed limits
+        self.banned_ways = []       # List of road segments banned for motorcycles
         self._ensure_cache_dir()
         self._load_cache()
 
@@ -65,6 +67,14 @@ class OSMSpeedEngine:
         except (FileNotFoundError, json.JSONDecodeError):
             print("[OSM] Chưa có cache speed limits.")
 
+        try:
+            with open(BANNEDWAY_CACHE_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                self.banned_ways = data.get("banned_ways", [])
+                print(f"[OSM] Đã load {len(self.banned_ways)} đường cấm xe máy từ cache.")
+        except (FileNotFoundError, json.JSONDecodeError):
+            print("[OSM] Chưa có cache đường cấm xe máy.")
+
     def _save_cache(self):
         """Lưu data vào cache local."""
         try:
@@ -78,7 +88,12 @@ class OSMSpeedEngine:
                     "ways": self.speed_ways,
                     "updated": time.strftime("%Y-%m-%d %H:%M")
                 }, f, ensure_ascii=False, indent=2)
-            print(f"[OSM] Cache đã lưu: {len(self.cameras)} cameras, {len(self.speed_ways)} ways")
+            with open(BANNEDWAY_CACHE_FILE, 'w', encoding='utf-8') as f:
+                json.dump({
+                    "banned_ways": self.banned_ways,
+                    "updated": time.strftime("%Y-%m-%d %H:%M")
+                }, f, ensure_ascii=False, indent=2)
+            print(f"[OSM] Cache đã lưu: {len(self.cameras)} cameras, {len(self.speed_ways)} ways, {len(self.banned_ways)} banned ways")
         except Exception as e:
             print("[OSM] Lỗi lưu cache:", e)
 
@@ -86,7 +101,7 @@ class OSMSpeedEngine:
     # FETCH TỪ OSM OVERPASS API
     # ─────────────────────────────────────────────
     def update_from_osm(self, bbox=VN_BBOX, timeout=120):
-        """Fetch toàn bộ camera + speed limit data từ OSM cho Việt Nam.
+        """Fetch toàn bộ camera + speed limit + banned ways từ OSM cho Việt Nam.
         
         Chỉ cần chạy 1 lần, sau đó dùng cache.
         Thời gian: ~30-60 giây cho toàn VN.
@@ -95,7 +110,7 @@ class OSMSpeedEngine:
             print("[OSM] Không có requests module. Dùng built-in urllib.")
             return self._update_with_urllib(bbox, timeout)
 
-        # Query Overpass QL - lấy camera + speed limit
+        # Query Overpass QL - lấy camera + speed limit + banned roads
         query = f"""
 [out:json][timeout:{timeout}];
 (
@@ -103,6 +118,10 @@ class OSMSpeedEngine:
   node["enforcement"="maxspeed"]({bbox});
   node["enforcement"="traffic_signals"]({bbox});
   way["maxspeed"]({bbox});
+  way["highway"="motorway"]({bbox});
+  way["highway"="motorway_link"]({bbox});
+  way["motorcycle"="no"]({bbox});
+  way["motor_vehicle"="no"]({bbox});
 );
 out body geom;
 """
@@ -139,7 +158,7 @@ out body geom;
         try:
             import urllib.request
             import urllib.parse
-            query = f'[out:json][timeout:{timeout}];(node["highway"="speed_camera"]({bbox}););out body;'
+            query = f'[out:json][timeout:{timeout}];(node["highway"="speed_camera"]({bbox});way["highway"="motorway"]({bbox});way["motorcycle"="no"]({bbox}););out body geom;'
             data = urllib.parse.urlencode({"data": query}).encode()
             req = urllib.request.Request(OVERPASS_ENDPOINTS[0], data=data, method="POST")
             with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -155,9 +174,10 @@ out body geom;
     # PARSE OSM RESPONSE
     # ─────────────────────────────────────────────
     def _parse_osm_response(self, data):
-        """Parse OSM JSON response, tách nodes (cameras) và ways (roads)."""
+        """Parse OSM JSON response, tách nodes (cameras), ways (roads), và banned ways."""
         new_cameras = []
         new_ways = []
+        new_banned_ways = []
 
         for element in data.get("elements", []):
             tags = element.get("tags", {})
@@ -183,6 +203,9 @@ out body geom;
                         "direction": tags.get("camera:direction", "both"),
                         "osm_id": element.get("id"),
                     }
+                    # Cap speed limits on camera too
+                    if cam["speed_limit"] > 80:
+                        cam["speed_limit"] = 80
                     new_cameras.append(cam)
                 elif enforcement == "traffic_signals":
                     new_cameras.append({
@@ -195,19 +218,41 @@ out body geom;
                     })
 
             elif elem_type == "way":
-                maxspeed = tags.get("maxspeed", "")
-                if maxspeed:
-                    # Parse speed limit (có thể là "60", "60 mph", "VN:urban", etc.)
-                    speed = self._parse_speed(maxspeed)
-                    geometry = element.get("geometry", [])
-                    if geometry and speed:
-                        new_ways.append({
-                            "nodes": [[g["lat"], g["lon"]] for g in geometry],
-                            "speed_limit": speed,
-                            "road_type": tags.get("highway", "road"),
-                            "name": tags.get("name", ""),
+                highway = tags.get("highway", "")
+                motorcycle = tags.get("motorcycle", "")
+                motor_vehicle = tags.get("motor_vehicle", "")
+                
+                # Check cấm xe máy
+                is_banned = False
+                if highway in ("motorway", "motorway_link"):
+                    is_banned = True
+                elif motorcycle == "no" or motor_vehicle == "no":
+                    is_banned = True
+
+                geometry = element.get("geometry", [])
+                if geometry:
+                    coords = [[g["lat"], g["lon"]] for g in geometry]
+                    
+                    if is_banned:
+                        new_banned_ways.append({
+                            "nodes": coords,
+                            "road_type": highway,
+                            "name": tags.get("name", "Đường cấm xe máy/Cao tốc"),
                             "osm_id": element.get("id"),
                         })
+
+                    maxspeed = tags.get("maxspeed", "")
+                    if maxspeed:
+                        # Parse speed limit (có thể là "60", "60 mph", "VN:urban", etc.)
+                        speed = self._parse_speed(maxspeed)
+                        if speed:
+                            new_ways.append({
+                                "nodes": coords,
+                                "speed_limit": speed,
+                                "road_type": highway,
+                                "name": tags.get("name", ""),
+                                "osm_id": element.get("id"),
+                            })
 
         # Merge với existing (dedup by OSM ID)
         existing_ids = {c.get("osm_id") for c in self.cameras}
@@ -218,26 +263,37 @@ out body geom;
         added_ways = [w for w in new_ways if w.get("osm_id") not in existing_way_ids]
         self.speed_ways.extend(added_ways)
 
-        print(f"[OSM] Parsed: +{len(added)} cameras, +{len(added_ways)} road segments")
+        existing_banned_ids = {w.get("osm_id") for w in self.banned_ways}
+        added_banned = [w for w in new_banned_ways if w.get("osm_id") not in existing_banned_ids]
+        self.banned_ways.extend(added_banned)
+
+        print(f"[OSM] Parsed: +{len(added)} cameras, +{len(added_ways)} road segments, +{len(added_banned)} banned segments")
 
     def _parse_speed(self, maxspeed_str):
-        """Chuyển đổi maxspeed string thành int km/h."""
+        """Chuyển đổi maxspeed string thành int km/h cho XE MÁY."""
         if not maxspeed_str:
             return None
-        # Vietnam default speeds theo loại đường
+        # Vietnam default speeds theo loại đường cho xe máy
         vn_defaults = {
-            "VN:urban": 60, "VN:rural": 80,
-            "VN:living_street": 20, "VN:motorway": 120,
+            "VN:urban": 50, "VN:rural": 80,
+            "VN:living_street": 20, "VN:motorway": 0, # Cấm xe máy
         }
         if maxspeed_str in vn_defaults:
-            return vn_defaults[maxspeed_str]
-        try:
-            # "60 mph" → convert to km/h
-            if "mph" in maxspeed_str:
-                return int(float(maxspeed_str.replace("mph", "").strip()) * 1.60934)
-            return int(float(maxspeed_str.split()[0]))
-        except (ValueError, IndexError):
-            return None
+            speed = vn_defaults[maxspeed_str]
+        else:
+            try:
+                # "60 mph" → convert to km/h
+                if "mph" in maxspeed_str:
+                    speed = int(float(maxspeed_str.replace("mph", "").strip()) * 1.60934)
+                else:
+                    speed = int(float(maxspeed_str.split()[0]))
+            except (ValueError, IndexError):
+                return None
+                
+        # Giới hạn tốc độ xe máy (xe mô tô) tối đa tại VN là 80 km/h
+        if speed > 80:
+            speed = 80
+        return speed
 
     # ─────────────────────────────────────────────
     # RUNTIME QUERIES
@@ -274,22 +330,46 @@ out body geom;
 
         return (best_speed, best_name)
 
+    def check_motorcycle_ban(self, lat, lon, search_radius_m=45):
+        """Kiểm tra xem vị trí hiện tại có ở trên hoặc rất gần đường cấm xe máy hay không.
+        
+        Trả về (is_banned, road_name) hoặc (False, "")
+        """
+        best_dist = float('inf')
+        best_name = ""
+        is_banned = False
+
+        for way in self.banned_ways:
+            nodes = way.get("nodes", [])
+            for i in range(len(nodes) - 1):
+                a = nodes[i]
+                b = nodes[i + 1]
+                dist = self._point_to_segment_dist(lat, lon, a[0], a[1], b[0], b[1])
+                if dist < best_dist and dist <= search_radius_m:
+                    best_dist = dist
+                    best_name = way.get("name", "Đường cao tốc/Cấm xe máy")
+                    is_banned = True
+
+        if is_banned:
+            return True, best_name
+        return False, ""
+
     def get_default_speed_limit(self, road_type="residential"):
-        """Giới hạn tốc độ mặc định theo Luật Giao thông Đường bộ VN."""
+        """Giới hạn tốc độ mặc định theo Luật Giao thông Đường bộ VN cho XE MÁY."""
         defaults = {
-            "motorway": 120,       # Đường cao tốc
-            "motorway_link": 80,
-            "trunk": 100,          # Quốc lộ
-            "trunk_link": 80,
-            "primary": 80,         # Đường tỉnh lộ
-            "secondary": 60,
-            "tertiary": 60,
-            "residential": 60,     # Đường đô thị
+            "motorway": 0,         # Đường cao tốc cấm xe máy hoàn toàn
+            "motorway_link": 0,
+            "trunk": 70,           # Quốc lộ ngoài đô thị (xe máy tối đa 70-80 km/h)
+            "trunk_link": 60,
+            "primary": 60,         # Tỉnh lộ ngoài đô thị
+            "secondary": 50,       # Huyện lộ
+            "tertiary": 50,
+            "residential": 50,     # Đường đô thị (xe máy mặc định 50 km/h)
             "living_street": 20,
             "service": 20,
-            "unclassified": 60,
+            "unclassified": 50,
         }
-        return defaults.get(road_type, 60)
+        return defaults.get(road_type, 50)
 
     # ─────────────────────────────────────────────
     # GEOMETRY UTILS
@@ -321,4 +401,5 @@ out body geom;
             "speed_cameras": len([c for c in self.cameras if c["type"] == "speed"]),
             "red_light_cameras": len([c for c in self.cameras if c["type"] == "red_light"]),
             "road_segments": len(self.speed_ways),
+            "banned_road_segments": len(self.banned_ways),
         }

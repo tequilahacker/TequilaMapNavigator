@@ -149,6 +149,7 @@ class NavigationEngine:
                 "origin": f"{origin_lat},{origin_lon}",
                 "destination": f"{dest_lat},{dest_lon}",
                 "mode": "two-wheeler",  # Google Maps hỗ trợ tìm đường xe máy tại VN
+                "avoid": "tolls|highways",  # Tránh đường cao tốc cấm xe máy & trạm thu phí ô tô
                 "key": self.api_key,
                 "language": "vi"
             }
@@ -543,6 +544,7 @@ class NavigationEngine:
                 "origin": f"{origin_lat},{origin_lon}",
                 "destination": f"{dest_lat},{dest_lon}",
                 "mode": "two-wheeler",
+                "avoid": "tolls|highways",  # Tránh cao tốc cấm xe máy & trạm thu phí ô tô
                 "alternatives": "true",
                 "key": self.api_key,
                 "language": "vi",

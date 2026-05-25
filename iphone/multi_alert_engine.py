@@ -163,7 +163,7 @@ class MultiAlertEngine:
                 print("[MultiAlert] Waze error:", e)
 
         # ── 3. Speed limit ──
-        speed_limit = 60
+        speed_limit = 50
         if self.osm:
             try:
                 limit, _ = self.osm.get_speed_limit_at(lat, lon)
@@ -171,7 +171,23 @@ class MultiAlertEngine:
                     speed_limit = limit
             except Exception:
                 pass
+        if speed_limit > 80:
+            speed_limit = 80
         result["speed_limit"] = speed_limit
+
+        # ── 3b. Motorcycle ban check ──
+        result["motorcycle_banned_warning"] = ""
+        if self.osm and hasattr(self.osm, 'check_motorcycle_ban'):
+            is_banned, ban_road_name = self.osm.check_motorcycle_ban(lat, lon, search_radius_m=45)
+            if is_banned:
+                result["motorcycle_banned_warning"] = f"CẤM XE MÁY: {ban_road_name}"
+                last_ban_warn = self._last_alert_distances.get("ban_warning", 0)
+                if time.time() - last_ban_warn > 20: # 20 seconds cooldown
+                    self._last_alert_distances["ban_warning"] = time.time()
+                    ban_speak = f"Cảnh báo! Phía trước là đường cấm xe máy {ban_road_name}. Hãy quay lại ngay!"
+                    result["speak_text"] = ban_speak
+            else:
+                self._last_alert_distances.pop("ban_warning", None)
 
         # ── 4. Speed over check ──
         if speed_kmh > 0:

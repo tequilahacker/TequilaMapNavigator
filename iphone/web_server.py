@@ -1067,6 +1067,7 @@ class NavigatorWebServer:
             "camera_type": "speed",     # Loại camera: speed / redlight
             "cameras_nearby": [],       # Danh sách camera gần (50–300m)
             "arrived_text": "",         # Thông báo đã đến đích (xóa sau khi ESP32 đọc)
+            "motorcycle_banned_warning": "", # Cảnh báo đường cấm xe máy
         }
         self.device_state = {
             "update": None,      # Gói tin update bản đồ cho ESP32
@@ -1525,6 +1526,29 @@ class NavigatorWebServer:
                     try:
                         lat = server_self.status.get("gps_lat")
                         lon = server_self.status.get("gps_lon")
+                        
+                        # 1. Kiểm tra đường cấm xe máy (motorcycle ban)
+                        osm_engine = None
+                        if server_self.cam_engine and hasattr(server_self.cam_engine, 'osm'):
+                            osm_engine = server_self.cam_engine.osm
+                        elif server_self.nav_engine and hasattr(server_self.nav_engine, 'osm'):
+                            osm_engine = server_self.nav_engine.osm
+                            
+                        if lat and lon and osm_engine and hasattr(osm_engine, 'check_motorcycle_ban'):
+                            is_banned, ban_road_name = osm_engine.check_motorcycle_ban(lat, lon, search_radius_m=45)
+                            if is_banned:
+                                warning_msg = f"⚠️ CẤM XE MÁY: {ban_road_name}"
+                                server_self.update_status(motorcycle_banned_warning=warning_msg)
+                                
+                                # Trigger voice warning (cooldown 20s)
+                                last_ban_warn = server_self.status.get("last_motorcycle_banned_warn_time", 0)
+                                if time.time() - last_ban_warn > 20:
+                                    server_self.status["last_motorcycle_banned_warn_time"] = time.time()
+                                    tts_msg = f"Cảnh báo! Phía trước là đường cấm xe máy {ban_road_name}. Hãy quay lại ngay!"
+                                    server_self.trigger_voice_alert(tts_msg)
+                            else:
+                                server_self.update_status(motorcycle_banned_warning="")
+
                         if lat and lon and server_self.cam_engine:
                             nearby_cams = server_self.cam_engine.get_nearby_cameras(
                                 lat, lon, radius_m=300
@@ -1561,6 +1585,18 @@ class NavigatorWebServer:
                 elif self.path == '/api/poll-device':
                     # Trả trạng thái thiết bị gom được cho ESP32 Polling
                     state = server_self.device_state.copy()
+                    
+                    # Cập nhật thông tin cảnh báo nếu chưa được điền hoặc bổ sung motorcycle_banned_warning
+                    if not state.get("alert"):
+                        state["alert"] = {}
+                    else:
+                        state["alert"] = dict(state["alert"])
+                    
+                    # Bổ sung các thông số hiện tại
+                    state["alert"]["speed_limit"] = server_self.status.get("speed_limit_now", 50)
+                    state["alert"]["current_speed"] = server_self.status.get("speed_kmh", 0)
+                    state["alert"]["motorcycle_banned_warning"] = server_self.status.get("motorcycle_banned_warning", "")
+                    
                     # Reset các tin nhắn/lệnh một lần
                     server_self.device_state["voice"] = None
                     server_self.device_state["stop"] = False
@@ -2088,6 +2124,29 @@ class NavigatorWebServer:
                     heading = data.get("heading", 0)
                     if lat and lon:
                         server_self.update_status(gps_lat=lat, gps_lon=lon, speed_kmh=speed)
+                        
+                        # Check motorcycle ban
+                        osm_engine = None
+                        if server_self.cam_engine and hasattr(server_self.cam_engine, 'osm'):
+                            osm_engine = server_self.cam_engine.osm
+                        elif server_self.nav_engine and hasattr(server_self.nav_engine, 'osm'):
+                            osm_engine = server_self.nav_engine.osm
+                            
+                        if osm_engine and hasattr(osm_engine, 'check_motorcycle_ban'):
+                            is_banned, ban_road_name = osm_engine.check_motorcycle_ban(lat, lon, search_radius_m=45)
+                            if is_banned:
+                                warning_msg = f"⚠️ CẤM XE MÁY: {ban_road_name}"
+                                server_self.update_status(motorcycle_banned_warning=warning_msg)
+                                
+                                # Trigger voice warning (cooldown 20s)
+                                last_ban_warn = server_self.status.get("last_motorcycle_banned_warn_time", 0)
+                                if time.time() - last_ban_warn > 20:
+                                    server_self.status["last_motorcycle_banned_warn_time"] = time.time()
+                                    tts_msg = f"Cảnh báo! Phía trước là đường cấm xe máy {ban_road_name}. Hãy quay lại ngay!"
+                                    server_self.trigger_voice_alert(tts_msg)
+                            else:
+                                server_self.update_status(motorcycle_banned_warning="")
+
                         if server_self.gps:
                             # Cập nhật toạ độ thủ công vào GPSTracker
                             server_self.gps._manual_loc = (lat, lon, heading, 5.0)
