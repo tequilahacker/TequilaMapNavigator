@@ -21,11 +21,11 @@ CLOUD_POLL_MS     = 1500
 # SETUP 1 LAN: vao https://tequilamap.onrender.com/api/gen-findmy-key
 # Sau do copy public_key_bytes tra ve vao FINDMY_PUBLIC_KEY duoi day
 FINDMY_BLE_ENABLED = True
-FINDMY_PUBLIC_KEY  = bytes([           # ← PLACEHOLDER: thay bang key tu /api/gen-findmy-key
-    0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0x01, 0x02,
-    0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A,
-    0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12,
-    0x13, 0x14, 0x15, 0x16
+FINDMY_PUBLIC_KEY  = bytes([  # ← KEY THẬT - đã gen ngày 25/05/2026
+    74, 65, 168, 22, 50, 46, 153, 59,
+    47, 163, 85, 131, 229, 167, 229, 96,
+    77, 12, 90, 17, 246, 165, 195, 50,
+    215, 173, 253, 53
 ])
 
 

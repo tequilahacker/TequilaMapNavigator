@@ -288,8 +288,13 @@ HTML_PAGE = """<!DOCTYPE html>
     <span class="dot dot-green" id="wifi-dot"></span>
     <span id="wifi-status">Đang quét...</span>
   </div>
-  <div class="status-item" id="gps-status">
-    📍 GPS: Đang định vị...
+  <div class="status-item">
+    <span class="dot" id="gps-dot" style="background:#888;"></span>
+    <span id="gps-status">📍 GPS: Đang định vị...</span>
+  </div>
+  <div class="status-item" style="cursor:pointer;" onclick="toggleFindMyPanel()" title="Kết nối Apple Find My">
+    <span id="findmy-dot" style="width:8px;height:8px;border-radius:50%;display:inline-block;background:#555;margin-right:5px;"></span>
+    <span id="findmy-status" style="font-size:11px;color:#aaa;">🍎 Find My</span>
   </div>
 </div>
 
@@ -321,6 +326,39 @@ HTML_PAGE = """<!DOCTYPE html>
     <button class="btn btn-success" onclick="getAlternativeRoutes()">🚀 TÌM ĐƯỜNG & SO SÁNH</button>
     <button class="btn btn-primary" onclick="optimizeRoute()">✨ AI TỐI ƯU CÁC ĐIỂM DỪNG</button>
   </div>
+</div>
+
+<!-- Apple Find My Setup Panel -->
+<div class="card" id="findmy-panel" style="display:none; border: 2px solid #4a90d9;">
+  <div class="card-title" style="color:#4a90d9;">🔑 Kết Nối Apple Find My</div>
+  <p style="color:#aaa; font-size:12px; margin:0 0 12px 0;">
+    Đăng nhập Apple ID để server tự động đọc GPS từ app Tìm — không cần mở Safari nữa.
+  </p>
+
+  <div id="findmy-form-area">
+    <input type="email" id="apple-id-input" placeholder="Apple ID (email)" 
+           style="width:100%;box-sizing:border-box;background:#1a1a2e;color:#eee;border:1px solid #4a90d9;border-radius:8px;padding:10px;font-size:14px;margin-bottom:8px;">
+    <input type="password" id="apple-pw-input" placeholder="Mật khẩu Apple ID"
+           style="width:100%;box-sizing:border-box;background:#1a1a2e;color:#eee;border:1px solid #4a90d9;border-radius:8px;padding:10px;font-size:14px;margin-bottom:12px;">
+    <button class="btn btn-primary" onclick="setupFindMy()" style="width:100%;">
+      🍎 Đăng nhập Apple ID
+    </button>
+  </div>
+
+  <div id="findmy-2fa-area" style="display:none;">
+    <p style="color:#f0a500; font-size:13px;">📱 Apple gửi mã xác nhận về iPhone của bạn.</p>
+    <input type="text" id="findmy-2fa-input" placeholder="Nhập 6 chữ số 2FA"
+           maxlength="6" style="width:100%;box-sizing:border-box;background:#1a1a2e;color:#eee;border:1px solid #f0a500;border-radius:8px;padding:10px;font-size:18px;text-align:center;letter-spacing:8px;margin-bottom:12px;">
+    <button class="btn btn-success" onclick="submit2FA()" style="width:100%;">
+      ✅ Xác nhận 2FA
+    </button>
+  </div>
+
+  <div id="findmy-status-msg" style="color:#00ff87;font-size:12px;margin-top:10px;display:none;"></div>
+  <button onclick="document.getElementById('findmy-panel').style.display='none'" 
+          style="background:none;border:none;color:#666;margin-top:8px;cursor:pointer;font-size:12px;">
+    Đóng
+  </button>
 </div>
 
 <!-- 3 Alternatives Route Selection Panel -->
@@ -357,6 +395,73 @@ let carMarker = null;
 let activePolyline = null;
 let previewPolylines = [];
 let cameraMarkers = [];
+let lastVoiceReply = '';
+
+// ─── Apple Find My Setup Functions ───
+function toggleFindMyPanel() {
+  const p = document.getElementById('findmy-panel');
+  p.style.display = (p.style.display === 'none' || p.style.display === '') ? 'block' : 'none';
+}
+
+async function setupFindMy() {
+  const appleId  = document.getElementById('apple-id-input').value.trim();
+  const password = document.getElementById('apple-pw-input').value;
+  if (!appleId || !password) { alert('Nhập Apple ID và mật khẩu!'); return; }
+  const msg = document.getElementById('findmy-status-msg');
+  msg.style.display = 'block'; msg.style.color = '#f0a500';
+  msg.textContent = '⏳ Đang kết nối Apple ID... (chờ 20-40 giây)';
+  try {
+    const r = await fetch('/api/setup-findmy', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ apple_id: appleId, password: password })
+    });
+    const d = await r.json();
+    if (d.status === '2fa_required') {
+      msg.style.color = '#f0a500';
+      msg.textContent = '📱 Apple gửi mã 2FA về iPhone của bạn. Nhập vào ô bên dưới.';
+      document.getElementById('findmy-form-area').style.display = 'none';
+      document.getElementById('findmy-2fa-area').style.display = 'block';
+      document.getElementById('findmy-2fa-input').focus();
+    } else if (d.status === 'ok') {
+      msg.style.color = '#00ff87';
+      msg.textContent = '✅ Đăng nhập thành công! GPS tự động từ Find My.';
+      document.getElementById('findmy-dot').style.background = '#00ff87';
+      document.getElementById('findmy-status').textContent = '🍎 Find My ✅';
+    } else {
+      msg.style.color = '#ff4444';
+      msg.textContent = '❌ ' + (d.message || d.error || JSON.stringify(d));
+    }
+  } catch(e) {
+    msg.style.color='#ff4444'; msg.textContent='❌ Lỗi: '+e.message;
+  }
+}
+
+async function submit2FA() {
+  const code = document.getElementById('findmy-2fa-input').value.trim();
+  if (code.length < 6) { alert('Mã 2FA phải đủ 6 chữ số!'); return; }
+  const msg = document.getElementById('findmy-status-msg');
+  msg.style.color = '#f0a500'; msg.textContent = '⏳ Đang xác nhận mã 2FA...';
+  try {
+    const r = await fetch('/api/findmy-2fa', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ code: code })
+    });
+    const d = await r.json();
+    if (d.status === 'ok') {
+      msg.style.color = '#00ff87';
+      msg.textContent = '✅ 2FA thành công! Find My đang chạy.';
+      document.getElementById('findmy-dot').style.background = '#00ff87';
+      document.getElementById('findmy-status').textContent = '🍎 Find My ✅';
+      document.getElementById('findmy-2fa-area').style.display = 'none';
+      setTimeout(()=>{ document.getElementById('findmy-panel').style.display='none'; }, 3000);
+    } else {
+      msg.style.color='#ff4444';
+      msg.textContent='❌ Mã sai hoặc hết hạn: '+(d.error||'Thử lại');
+    }
+  } catch(e) {
+    msg.style.color='#ff4444'; msg.textContent='❌ Lỗi: '+e.message;
+  }
+}
 
 // Khởi tạo bản đồ ngay từ đầu
 document.addEventListener('DOMContentLoaded', () => {
@@ -416,7 +521,6 @@ function initMap() {
   carMarker = L.marker([10.7769, 106.7009], { icon: motoIcon }).addTo(map);
 }
 
-let lastVoiceReply = "";
 
 async function fetchStatus() {
   try {
