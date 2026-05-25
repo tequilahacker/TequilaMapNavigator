@@ -2087,8 +2087,8 @@ class NavigatorWebServer:
             print("[WebServer] Thư viện http.server không khả dụng")
             return
         handler = self._handle_request(None)
-        socketserver.TCPServer.allow_reuse_address = True
-        self._server = socketserver.TCPServer(("0.0.0.0", self.port), handler)
+        socketserver.ThreadingTCPServer.allow_reuse_address = True
+        self._server = socketserver.ThreadingTCPServer(("0.0.0.0", self.port), handler)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
         print(f"[WebServer] ✅ Mobile Web UI đang chạy tại: http://localhost:{self.port}")
