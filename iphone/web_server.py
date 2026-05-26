@@ -523,11 +523,11 @@ function initMap() {
   // Mặc định trung tâm Sài Gòn
   map = L.map('map', { zoomControl: false }).setView([10.7769, 106.7009], 14);
   
-  // HERE Maps v3 tiles — đẹp hơn OSM, tên đường VN rõ, địa điểm chi tiết
-  const HERE_KEY = '3RG9AwLcD9ZK8AVD_H50vdb7BX_khn1Fs5O2BEnBGWI';
-  L.tileLayer(`https://maps.hereapi.com/v3/base/mc/{z}/{x}/{y}/png?apikey=${HERE_KEY}&style=explore.night&lang=vi`, {
+  // CartoDB Dark Matter — tối đẹp, miễn phí, không cần key, native Leaflet support
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
     maxZoom: 20,
-    attribution: '© HERE Maps'
+    subdomains: 'abcd',
+    attribution: '© OpenStreetMap © CARTO'
   }).addTo(map);
 
   const motoIcon = L.divIcon({
