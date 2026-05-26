@@ -356,7 +356,7 @@ def fetch_audio_from_server():
 
 def polling_loop():
     """Vòng lặp kéo dữ liệu từ máy chủ (GET /api/poll-device) định kỳ."""
-    global is_running, available_routes, is_simulating
+    global is_running, available_routes, is_simulating, current_destination_name
     last_hud_print_time = 0
     
     # Định kỳ gửi GPS hiện tại để đồng bộ hóa ban đầu
@@ -404,8 +404,6 @@ def polling_loop():
                         hud_changed = True
                         # Lưu tên điểm đến từ routes nếu có
                         if available_routes and "label" in available_routes[0]:
-                            global current_destination_name
-                            # Sử dụng summary của tuyến đầu tiên
                             rt0 = available_routes[0]
                             if rt0.get("summary"):
                                 current_destination_name = rt0["summary"]
@@ -433,7 +431,6 @@ def polling_loop():
                             dest_info = up.get("dest", {})
                             dest_name = dest_info.get("name", current_destination_name) if isinstance(dest_info, dict) else current_destination_name
                             if dest_name:
-                                global current_destination_name
                                 if up.get("route") and len(up["route"]) > 0:
                                     dest_pt = up["route"][-1]
                                     open_google_maps_browser(
