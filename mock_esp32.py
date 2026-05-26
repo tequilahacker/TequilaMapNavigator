@@ -238,33 +238,53 @@ def open_google_maps_browser(origin_lat, origin_lon, dest_name, dest_lat=None, d
     
     threading.Thread(target=_open, daemon=True).start()
 
+def open_maps_current_location():
+    """Mở Google Maps hiển thị vị trí hiện tại ngay khi khởi động.
+    
+    Mô phỏng màn hình TFT của ESP32 luôn hiển thị bản đồ từ khi bật nguồn.
+    Không có giới hạn 10 giây vì đây là lần mở đầu.
+    """
+    global last_browser_open_time
+    lat = current_hud["lat"]
+    lon = current_hud["lon"]
+    # Chế độ hiển thị bản đồ - không có đích đến cụ thể
+    maps_url = f"https://www.google.com/maps/@{lat},{lon},15z"
+    print(f"\n🗺️ [KHỜI ĐỘNG] Mở Google Maps hiển thị vị trí hiện tại...")
+    print(f"   → Nói ‘đến [tên địa điểm]’ để tìm đường!")
+    def _open():
+        webbrowser.open(maps_url)
+    threading.Thread(target=_open, daemon=True).start()
+    last_browser_open_time = time.time()  # reset cooldown
+
 def print_hud():
     """Vẽ giao diện HUD xe máy giả lập lên Terminal."""
     os.system('clear' if os.name == 'posix' else 'cls')
-    print("="*60)
+    W = 62
+    print("═" * W)
     print("   🏍️  TEQUILA MOTORCYCLE NAVIGATOR - ESP32 SIMULATOR (macOS)")
-    print("="*60)
-    print(f"Trạng thái liên kết: {'ĐÁM MÂY ☁️' if USE_SSL else 'CỤC BỘ 📱'} | Máy chủ: {SERVER_HOST}:{SERVER_PORT}")
+    print("═" * W)
+    mode = 'ĐÁM MÂY ☁️' if USE_SSL else 'CỤC BỘ 📱'
+    print(f"Kết nối: {mode} | {SERVER_HOST}:{SERVER_PORT}")
     has_mic = check_ffmpeg()
-    mic_status = "\033[92mSẴN SÀNG ✅\033[0m" if has_mic else "\033[91mTHIẾU FFMPEG ❌ (Dùng phím 2 để nhập chữ)\033[0m"
-    print(f"🎤 Micro máy Mac    : {mic_status}")
-    print("-"*60)
-    print(f"📍 GPS hiện tại : {current_hud['lat']:.6f}, {current_hud['lon']:.6f}")
-    print(f"🧭 Hướng di chuyển: {current_hud['heading']}°")
-    print("-"*60)
+    mic_status = "\033[92mSẴN SÀNG ✅\033[0m" if has_mic else "\033[91mTHIếu FFMPEG ❌ (nhập phím 2)\033[0m"
+    print(f"🎤 Micro : {mic_status}")
+    print("-" * W)
+    print(f"📍 GPS : {current_hud['lat']:.6f}, {current_hud['lon']:.6f}  🧭 {current_hud['heading']}°")
+    print("-" * W)
     
     limit_str = f"{current_hud['speed_limit']} km/h" if current_hud['speed_limit'] < 999 else "Không giới hạn"
-    
-    if current_hud['speed'] > current_hud['speed_limit']:
-        print(f"⚡ Tốc độ hiện tại: \033[91m{current_hud['speed']} km/h\033[0m  |  🛑 Giới hạn tốc độ: {limit_str}")
+    spd = current_hud['speed']
+    lmt = current_hud['speed_limit']
+    if spd > lmt:
+        print(f"⚡ Tốc độ: \033[91m{spd} km/h ⚠️ VƯỢT TỐC\033[0m  |  🛑 Giới hạn: {limit_str}")
     else:
-        print(f"⚡ Tốc độ hiện tại: \033[92m{current_hud['speed']} km/h\033[0m  |  🛑 Giới hạn tốc độ: {limit_str}")
+        print(f"⚡ Tốc độ: \033[92m{spd} km/h\033[0m  |  🛑 Giới hạn: {limit_str}")
     
     if current_hud['camera_dist'] <= 300:
-        cam_name = "TỐC ĐỘ" if current_hud['camera_type'] == "speed" else "VƯỢT ĐÈN ĐỎ"
-        print(f"\033[91m⚠️ [CẢNH BÁO CAMERA PHẠT NGUỘI {cam_name} CÁCH {current_hud['camera_dist']} MÉT!]\033[0m")
+        cam_name = "TỐC ĐỘ" if current_hud['camera_type'] == "speed" else "VƯỢT ĐÈN Đỏ"
+        print(f"\033[91m⚠️ CAMERA {cam_name} − CÁCH {current_hud['camera_dist']}m!\033[0m")
     else:
-        print("🟢 Hành trình an toàn - Không phát hiện camera phạt nguội phía trước")
+        print("🟢 Hành trình an toàn - Không phát hiện camera phít nguội")
         
     if current_hud.get("motorcycle_banned_warning"):
         print(f"\033[91m\033[5m{current_hud['motorcycle_banned_warning'].upper()} - QUAY LẠI NGAY!\033[0m")
@@ -274,17 +294,41 @@ def print_hud():
     print(f"│ 🗺️ Chỉ dẫn: {current_hud['instruction'][:48].ljust(48)} │")
     print("└────────────────────────────────────────────────────────┘\033[0m")
     
-    print(f"🕒 Thời gian còn lại: {current_hud['eta']} phút  |  🏁 Quãng đường: {current_hud['distance_remain']} km")
-    print("="*60)
-    
+    print(f"🕒 ETA: {current_hud['eta']} phút  |  🏁 Còn lại: {current_hud['distance_remain']} km")
+    W = 62
+    print("═" * W)
+
+    # ════ HIỆN CẢ 3 TUYẾN ĐƯỜNG NẾU CÓ ════
     if available_routes:
-        print("💡 [NHẤN PHÍM ENTER] để chọn Tuyến đường tối ưu...")
+        print()
+        print("\033[93m" + "╔" + "═" * (W-2) + "╗")
+        n = len(available_routes)
+        title = f"  📍 CHỌN TUYẾN ĐƯỜNG — Có {n} tuyến, nhập số 1–{n} rồi ENTER  "
+        print(f"║{title.ljust(W-2)}║")
+        print("╠" + "═" * (W-2) + "╣")
+        for i, rt in enumerate(available_routes):
+            num   = i + 1
+            label = rt.get("label", f"Tuyến {num}")
+            dist  = rt.get("dist_km", "?")
+            eta   = rt.get("eta_min", "?")
+            cams  = rt.get("camera_count", rt.get("cameras_count", "?"))
+            spmax = rt.get("max_speed", rt.get("speed_max", 60))
+            summ  = rt.get("summary", "")[:28]
+            if i == 0:
+                print(f"║ \033[92m[{num}] ⭐ TUYẾN ƯU TIÊN — {dist} km  ⏱ ~{eta} phút\033[93m")
+            else:
+                print(f"║ [{num}] {label} — {dist} km  ⏱ ~{eta} phút")
+            print(f"║     📷 {cams} camera  🛣️ ≤{spmax}km/h  🗺 {summ}")
+            if i < n - 1:
+                print("╠" + "─" * (W-2) + "╣")
+        print("╚" + "═" * (W-2) + "╝\033[0m")
+        print(f"💡 Nhập \033[92m1\033[0m / \033[93m2\033[0m / \033[91m3\033[0m rồi ENTER  [0 = hủy]")
     else:
-        print("💡 [NHẤN PHÍM ENTER] để nói 'Hey Tequila' qua Mic MacBook...")
-    if current_destination_name:
-        print(f"🗺️ [Google Maps đang mở] Điểm đến: {current_destination_name}")
-        print("   → Xem bản đồ và tuyến đường chi tiết trên tab browser!")
-    print("="*60)
+        if current_destination_name:
+            print(f"🗺️  Maps: \033[92m{current_destination_name}\033[0m")
+        print("💡 Nhấn ENTER rồi nói lệnh hoặc gõ chữ")
+    print("═" * W)
+
 
 def save_and_play_pcm(pcm_data):
     """Bọc PCM thô thành file WAV và phát ra loa máy tính Mac bằng lệnh afplay có sẵn."""
@@ -707,21 +751,26 @@ def main():
     t = threading.Thread(target=polling_loop, daemon=True)
     t.start()
     
+    # Mở Google Maps ngay khi khởi động - mô phỏng màn hình TFT luôn hiển thị bản đồ
+    open_maps_current_location()
+    
     print_hud()
     
     while is_running:
         try:
-            input()
-            
+            raw = input()
             global is_typing
             is_typing = True
             
-            # Nếu đang có danh sách tuyến đường để chọn
+            # ── Có tuyến đường chờ chọn: hiện ngay trong HUD, nhập số 1/2/3 ──
             if available_routes:
-                print("\033[93m🗺️ Chọn tuyến đường (Nhập 1, 2, 3... hoặc gõ 0 để HUỶ):\033[0m")
-                sel = input("> ").strip()
+                sel = raw.strip()
+                if not sel:
+                    # Chưa nhập gì, hỏi lại
+                    print(f"\033[93m→ Nhập số tuyến (1–{len(available_routes)}) hoặc 0 để hủy:\033[0m", end=" ")
+                    sel = input().strip()
                 is_typing = False
-                
+
                 if sel == "0":
                     try:
                         addr = socket.getaddrinfo(SERVER_HOST, SERVER_PORT, socket.AF_INET)[0][-1]
@@ -732,12 +781,15 @@ def main():
                             s = ssl.create_default_context().wrap_socket(s, server_hostname=SERVER_HOST)
                         s.send(f"POST /api/stop HTTP/1.1\r\nhost: {SERVER_HOST}\r\nContent-Length: 0\r\n\r\n".encode())
                         s.close()
-                    except: pass
+                    except:
+                        pass
                     print_hud()
                 elif sel.isdigit():
                     idx = int(sel) - 1
                     if 0 <= idx < len(available_routes):
+                        print(f"\n✅ Đã chọn Tuyến {idx+1} — Đang khởi động dẫn đường...")
                         select_route_on_server(idx)
+                        time.sleep(1.5)
                     else:
                         print("⚠️ Số thứ tự không hợp lệ.")
                         time.sleep(1.0)
