@@ -1801,90 +1801,67 @@ class NavigatorWebServer:
                     server_self.device_state["voice"] = None
                     server_self.device_state["stop"] = False
                     self.send_json(state)
-                elif self.path.startswith('/tile/'):
-                    # ── HERE Maps Tile Proxy — tránh CORS cho browser ──
-                    # Browser gọi /tile/{z}/{x}/{y}.png → server lấy HERE tile → trả về
-                    import re as _re
-                    _tm = _re.match(r'/tile/(\d+)/(\d+)/(\d+)\.png', self.path)
-                    if _tm:
-                        _tz, _tx, _ty = _tm.group(1), _tm.group(2), _tm.group(3)
-                        _here_url = (
-                            f"https://maps.hereapi.com/v3/base/mc/{_tz}/{_tx}/{_ty}/png"
-                            f"?apikey={HERE_API_KEY}&style=explore.day&lang=vi"
-                        )
-                        try:
-                            import requests as _rq
-                            _tr = _rq.get(_here_url, timeout=5,
-                                          headers={"User-Agent": "TequilaMap/2.0"})
-                            if _tr.status_code == 200:
-                                self.send_response(200)
-                                self.send_header('Content-Type', 'image/png')
-                                self.send_header('Cache-Control', 'public, max-age=86400')
-                                self.send_header('Access-Control-Allow-Origin', '*')
-                                self.end_headers()
-                                self.wfile.write(_tr.content)
-                            else:
-                                self.send_response(502)
-                                self.end_headers()
-                        except Exception as _te:
-                            print(f"[TileProxy] Lỗi: {_te}")
-                            self.send_response(503)
-                            self.end_headers()
-                    else:
-                        self.send_response(400)
-                        self.end_headers()
                 elif self.path.startswith('/api/map-image'):
-                    # ── TRẢ ẢNH JPEG BẢN ĐỒ GOOGLE MAPS CHO ESP32 ──
-                    # Center = vị trí user hiện tại, có route line màu xanh
+                    # ── TRẢ ẢNH BẢN ĐỒ CHO ESP32 ──
+
+                    # format=rgb565 → raw 240×252×2 bytes cho ILI9341
+                    # format=png    → PNG cho web browser
                     import urllib.parse as _up
-                    _qs = _up.parse_qs(_up.urlparse(self.path).query)
-                    _lat = float(_qs.get('lat', [str(server_self.status.get('gps_lat') or 10.8541)])[0])
-                    _lon = float(_qs.get('lon', [str(server_self.status.get('gps_lon') or 106.7878)])[0])
+                    _qs   = _up.parse_qs(_up.urlparse(self.path).query)
+                    _lat  = float(_qs.get('lat',  [str(server_self.status.get('gps_lat') or 10.8541)])[0])
+                    _lon  = float(_qs.get('lon',  [str(server_self.status.get('gps_lon') or 106.7878)])[0])
                     _zoom = int(_qs.get('zoom', ['17'])[0])
-                    _now = time.time()
-                    
-                    # Cache 3 giây, invalidate khi GPS thay đổi > 10m
+                    _fmt  = _qs.get('format', ['png'])[0]
+                    _now  = time.time()
+
                     cache = server_self._map_cache
-                    gps_moved = (abs(_lat - cache['lat']) > 0.0001 or
-                                 abs(_lon - cache['lon']) > 0.0001)
-                    cache_valid = (cache['data'] and
-                                   (_now - cache['ts'] < 3.0) and
-                                   not gps_moved)
-                    
+                    gps_moved   = (abs(_lat - cache['lat']) > 0.0001 or
+                                   abs(_lon - cache['lon']) > 0.0001)
+                    cache_valid = (cache.get('data_'+_fmt) and
+                                   (_now - cache['ts'] < 3.0) and not gps_moved)
+
                     if cache_valid:
-                        img_bytes = cache['data']
+                        img_bytes = cache['data_'+_fmt]
                     else:
-                        # Lấy route polyline hiện tại từ server state
                         route_poly = server_self.status.get('route_polyline', [])
-                        img_bytes = server_self.nav_engine.get_static_map_jpeg(
-                            _lat, _lon,
-                            route_polyline=route_poly if route_poly else None,
-                            zoom=_zoom,
-                            width=240, height=280
-                        ) if server_self.nav_engine else None
-                        
-                        if img_bytes:
-                            server_self._map_cache = {
-                                'data': img_bytes, 'ts': _now,
-                                'lat': _lat, 'lon': _lon
-                            }
+                        _pil_img = None
+                        # OSM tile fallback → PIL Image
+                        try:
+                            _osm_png = _get_osm_map_png(
+                                _lat, _lon, _zoom, 240, 252, route_poly)
+                            if _osm_png:
+                                from PIL import Image
+                                import io as _io
+                                _pil_img = Image.open(_io.BytesIO(_osm_png)).convert('RGB')
+                        except Exception as _e2:
+                            print(f"[MapFallback] {_e2}")
+
+                        if _pil_img is not None:
+                            _pil_img = _pil_img.resize((240, 252))
+                            if _fmt == 'rgb565':
+                                _pixels = list(_pil_img.getdata())
+                                _buf565 = bytearray(240 * 252 * 2)
+                                for _i, (_r, _g, _b) in enumerate(_pixels):
+                                    _v = ((_r & 0xF8) << 8) | ((_g & 0xFC) << 3) | (_b >> 3)
+                                    _buf565[_i*2]   = _v >> 8
+                                    _buf565[_i*2+1] = _v & 0xFF
+                                img_bytes = bytes(_buf565)
+                            else:
+                                import io as _io
+                                _out = _io.BytesIO()
+                                _pil_img.save(_out, format='PNG', optimize=True)
+                                img_bytes = _out.getvalue()
+                            cache['data_'+_fmt] = img_bytes
+                            cache['ts']  = _now
+                            cache['lat'] = _lat
+                            cache['lon'] = _lon
                         else:
-                            # Fallback: dùng OpenStreetMap tile ghép lại (miễn phí, không cần API)
-                            try:
-                                img_bytes = _get_osm_map_png(_lat, _lon, _zoom, 240, 280,
-                                                             server_self.status.get('route_polyline', []))
-                                if img_bytes:
-                                    server_self._map_cache = {
-                                        'data': img_bytes, 'ts': _now,
-                                        'lat': _lat, 'lon': _lon
-                                    }
-                            except Exception as _osm_e:
-                                print(f"[MapFallback] OSM error: {_osm_e}")
-                                img_bytes = None
-                    
+                            img_bytes = None
+
                     if img_bytes:
+                        ctype = 'application/octet-stream' if _fmt=='rgb565' else 'image/png'
                         self.send_response(200)
-                        self.send_header('Content-Type', 'image/png')
+                        self.send_header('Content-Type', ctype)
                         self.send_header('Content-Length', str(len(img_bytes)))
                         self.send_header('Access-Control-Allow-Origin', '*')
                         self.send_header('Cache-Control', 'max-age=3')
@@ -1895,6 +1872,7 @@ class NavigatorWebServer:
                         self.send_header('Access-Control-Allow-Origin', '*')
                         self.end_headers()
                         self.wfile.write(b'{"error":"map unavailable"}')
+
 
                 elif self.path == '/api/get-audio':
                     # Trả về luồng âm thanh PCM nhị phân thô cho ESP32 phát qua Loa
