@@ -523,11 +523,11 @@ function initMap() {
   // Mặc định trung tâm Sài Gòn
   map = L.map('map', { zoomControl: false }).setView([10.7769, 106.7009], 14);
   
-  // CartoDB Dark Matter — tối đẹp, miễn phí, không cần key, native Leaflet support
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    maxZoom: 20,
-    subdomains: 'abcd',
-    attribution: '© OpenStreetMap © CARTO'
+  // OpenStreetMap — bản đồ chuẩn, luôn hoạt động, đủ đường VN
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    subdomains: 'abc',
+    attribution: '© OpenStreetMap contributors'
   }).addTo(map);
 
   const motoIcon = L.divIcon({
