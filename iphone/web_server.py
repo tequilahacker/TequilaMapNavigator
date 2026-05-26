@@ -324,7 +324,7 @@ HTML_PAGE = """<!DOCTYPE html>
 <div class="card">
   <div class="card-title">⚙️ Cấu hình thiết bị & Trợ lý</div>
   <input type="text" id="esp32-ip" placeholder="Địa chỉ IP của ESP32 (VD: 172.20.10.2)" value="172.20.10.2">
-  <input type="text" id="gemini-key" placeholder="Google Gemini AI API Key" value="AIzaSyDtJSYHSN_cviBBHfgpKItuDaOsg-i7fq0">
+  <input type="text" id="gemini-key" placeholder="Google Gemini AI API Key" value="AIzaSyDwmxZS5r9-XJHU32tJUo_Q3dblpyRm-x4">
 </div>
 
 <!-- Setup Panel -->
@@ -523,9 +523,11 @@ function initMap() {
   // Mặc định trung tâm Sài Gòn
   map = L.map('map', { zoomControl: false }).setView([10.7769, 106.7009], 14);
   
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '© OpenStreetMap'
+  // HERE Maps v3 tiles — đẹp hơn OSM, tên đường VN rõ, địa điểm chi tiết
+  const HERE_KEY = '3RG9AwLcD9ZK8AVD_H50vdb7BX_khn1Fs5O2BEnBGWI';
+  L.tileLayer(`https://maps.hereapi.com/v3/base/mc/{z}/{x}/{y}/png?apikey=${HERE_KEY}&style=explore.night&lang=vi`, {
+    maxZoom: 20,
+    attribution: '© HERE Maps'
   }).addTo(map);
 
   const motoIcon = L.divIcon({
@@ -1034,6 +1036,180 @@ a{color:#4a90d9;font-size:14px}
 </body>
 </html>'''
 
+# ─── HERE Maps API Key ───
+# Đăng ký miễn phí tại: platform.here.com  (30 triệu req/tháng)
+# Điền key vào đây sau khi lấy từ HERE Developer Portal
+HERE_API_KEY = "3RG9AwLcD9ZK8AVD_H50vdb7BX_khn1Fs5O2BEnBGWI"
+
+
+def _get_here_map_png(lat, lon, zoom=17, width=240, height=280, route_polyline=None):
+    """Ghép tile HERE Maps v3 thành ảnh PNG 240×280.
+    
+    HERE Maps v3 tile: maps.hereapi.com/v3/base/mc/{z}/{x}/{y}/png
+    Đẹp hơn OSM: có tên đường VN rõ, quán nhỏ hiển thị, style explore.day.
+    30 triệu req/tháng miễn phí.
+    Fallback về OSM nếu chưa có key hoặc lỗi.
+    """
+    import math as _math
+    import io
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:
+        return _get_osm_map_png_fallback(lat, lon, zoom, width, height, route_polyline)
+    try:
+        import requests as _req
+    except ImportError:
+        return None
+
+    # ── 1. HERE Maps v3 Tile Stitch ──
+    if HERE_API_KEY:
+        try:
+            def _lat_lon_to_tile(lat, lon, z):
+                n = 2 ** z
+                x = (lon + 180.0) / 360.0 * n
+                lat_r = _math.radians(lat)
+                y = (1.0 - _math.asinh(_math.tan(lat_r)) / _math.pi) / 2.0 * n
+                return x, y
+
+            tx, ty = _lat_lon_to_tile(lat, lon, zoom)
+            tile_x, tile_y = int(tx), int(ty)
+            off_x = (tx - tile_x) * 256
+            off_y = (ty - tile_y) * 256
+
+            TILE_SIZE = 256
+            canvas = Image.new("RGB", (TILE_SIZE * 3, TILE_SIZE * 3), (200, 200, 200))
+            success = 0
+
+            for row in range(3):
+                for col in range(3):
+                    tx2 = (tile_x - 1 + col) % (2 ** zoom)
+                    ty2 = tile_y - 1 + row
+                    url = (
+                        f"https://maps.hereapi.com/v3/base/mc/{zoom}/{tx2}/{ty2}/png"
+                        f"?apikey={HERE_API_KEY}&style=explore.day&lang=vi"
+                    )
+                    try:
+                        r = _req.get(url, timeout=4,
+                                     headers={"User-Agent": "TequilaMap/2.0"})
+                        if r.status_code == 200:
+                            tile_img = Image.open(io.BytesIO(r.content)).convert("RGB")
+                            canvas.paste(tile_img, (col * TILE_SIZE, row * TILE_SIZE))
+                            success += 1
+                    except Exception:
+                        pass
+
+            if success == 0:
+                raise Exception("Tất cả HERE tiles thất bại")
+
+            cx = int(TILE_SIZE + off_x)
+            cy = int(TILE_SIZE + off_y)
+            draw = ImageDraw.Draw(canvas)
+
+            # Vẽ route (polyline xanh)
+            if route_polyline and len(route_polyline) >= 2:
+                def _coord_to_canvas(rlat, rlon):
+                    rx, ry = _lat_lon_to_tile(rlat, rlon, zoom)
+                    return (int((rx - (tile_x - 1)) * TILE_SIZE),
+                            int((ry - (tile_y - 1)) * TILE_SIZE))
+                pts = [_coord_to_canvas(p[0], p[1]) for p in route_polyline]
+                for i in range(len(pts) - 1):
+                    draw.line([pts[i], pts[i+1]], fill=(0, 85, 255), width=6)
+
+            # Vẽ marker đỏ vị trí user
+            r_m = 10
+            draw.ellipse([cx-r_m, cy-r_m, cx+r_m, cy+r_m],
+                         fill=(220, 30, 30), outline=(255, 255, 255), width=2)
+            draw.polygon([(cx, cy-r_m-8), (cx-6, cy-r_m+2), (cx+6, cy-r_m+2)],
+                         fill=(220, 30, 30))
+
+            left = cx - width // 2
+            top  = cy - height // 2
+            cropped = canvas.crop((left, top, left + width, top + height))
+            buf = io.BytesIO()
+            cropped.save(buf, format="PNG", optimize=True)
+            print(f"[HERE Map] ✅ {success}/9 tiles OK ({len(buf.getvalue())//1024}KB)")
+            return buf.getvalue()
+
+        except Exception as e:
+            print(f"[HERE Map] Lỗi: {e} — fallback OSM...")
+
+    # ── 2. OSM Fallback ──
+    return _get_osm_map_png_fallback(lat, lon, zoom, width, height, route_polyline)
+
+
+def _get_osm_map_png_fallback(lat, lon, zoom=17, width=240, height=280, route_polyline=None):
+    """OSM tile stitch fallback — dùng khi HERE key chưa có hoặc lỗi."""
+    import math as _math
+    import io
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:
+        return None
+    try:
+        import requests as _req
+    except ImportError:
+        return None
+
+    def _lat_lon_to_tile(lat, lon, zoom):
+        n = 2 ** zoom
+        x = (lon + 180.0) / 360.0 * n
+        lat_r = _math.radians(lat)
+        y = (1.0 - _math.asinh(_math.tan(lat_r)) / _math.pi) / 2.0 * n
+        return x, y
+
+    tx, ty = _lat_lon_to_tile(lat, lon, zoom)
+    tile_x = int(tx)
+    tile_y = int(ty)
+    off_x = (tx - tile_x) * 256
+    off_y = (ty - tile_y) * 256
+
+    TILE_SIZE = 256
+    canvas = Image.new("RGB", (TILE_SIZE * 3, TILE_SIZE * 3), (200, 200, 200))
+
+    for row in range(3):
+        for col in range(3):
+            tx2 = (tile_x - 1 + col) % (2 ** zoom)
+            ty2 = tile_y - 1 + row
+            url = f"https://tile.openstreetmap.org/{zoom}/{tx2}/{ty2}.png"
+            try:
+                r = _req.get(url, timeout=4,
+                             headers={"User-Agent": "TequilaMap/2.0 ESP32Navigator"})
+                if r.status_code == 200:
+                    tile_img = Image.open(io.BytesIO(r.content)).convert("RGB")
+                    canvas.paste(tile_img, (col * TILE_SIZE, row * TILE_SIZE))
+            except Exception:
+                pass
+
+    cx = int(TILE_SIZE + off_x)
+    cy = int(TILE_SIZE + off_y)
+    draw = ImageDraw.Draw(canvas)
+
+    if route_polyline and len(route_polyline) >= 2:
+        def _coord_to_canvas(rlat, rlon):
+            rx, ry = _lat_lon_to_tile(rlat, rlon, zoom)
+            return int((rx - (tile_x - 1)) * TILE_SIZE), int((ry - (tile_y - 1)) * TILE_SIZE)
+        pts = [_coord_to_canvas(p[0], p[1]) for p in route_polyline]
+        for i in range(len(pts) - 1):
+            draw.line([pts[i], pts[i+1]], fill=(0, 85, 255), width=5)
+
+    r_m = 10
+    draw.ellipse([cx-r_m, cy-r_m, cx+r_m, cy+r_m],
+                 fill=(220, 30, 30), outline=(255, 255, 255), width=2)
+    draw.polygon([(cx, cy-r_m-8), (cx-6, cy-r_m+2), (cx+6, cy-r_m+2)],
+                 fill=(220, 30, 30))
+
+    left = cx - width // 2
+    top  = cy - height // 2
+    cropped = canvas.crop((left, top, left + width, top + height))
+    buf = io.BytesIO()
+    cropped.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
+# Alias để code cũ gọi _get_osm_map_png vẫn hoạt động
+_get_osm_map_png = _get_here_map_png
+
+
 class NavigatorWebServer:
     """Flask-style HTTP server chạy trên Pythonista iPhone qua mạng WiFi Hotspot."""
     
@@ -1044,18 +1220,32 @@ class NavigatorWebServer:
         self.esp32_ip = esp32_ip
         self.cam_engine = camera_engine
         self.gps = gps_tracker
+        # API keys
+        self.GOOGLE_MAPS_API_KEY = "AIzaSyB11vo0te9tTtdBZogm3ltE2X7lHN20zfQ"
+        # Map image cache (tránh spam API, cache 3 giây)
+        self._map_cache = {"data": None, "ts": 0, "lat": 0, "lon": 0}
+        # Speed alert cooldown (5 phút)
+        self._speed_alert_ts = 0
+        self.SPEED_ALERT_COOLDOWN = 300  # giây
+        # Turn notification (xi nhan ×3)
+        self._turn_announced_dist = None  # khoảng cách đã thông báo
+        # Arrived flag
+        self._arrived = False
+        # Camera alert distance
+        self.CAMERA_ALERT_DIST = 50  # mét
         self.status = {
             "wifi_connected": True,
             "gps_lat": None, "gps_lon": None,
             "is_navigating": False,
             "current_instruction": "Sẵn sàng",
             "dist_to_turn": None,
+            "turn_direction": None,
             "speed_kmh": 0,
             "eta_min": None,
             "dist_remain_km": None,
             "camera_warning": None,
             "battery_pct": 100,
-            "gemini_api_key": "AIzaSyDtJSYHSN_cviBBHfgpKItuDaOsg-i7fq0",
+            "gemini_api_key": "AIzaSyDwmxZS5r9-XJHU32tJUo_Q3dblpyRm-x4",
             "voice_reply": None,
             "route_polyline": [],       # Polyline hiển thị trên Web UI
             "pending_routes": [],       # 3 tuyến đường đang chờ user chọn
@@ -1193,7 +1383,10 @@ class NavigatorWebServer:
                                     max_speed = limit
                                     
                         rt["camera_count"] = cameras_count
-                        rt["max_speed"] = max_speed
+                        rt["max_speed"]     = max_speed
+                        # Alias cho mock_esp32 + ESP32 client dễ đọc
+                        rt["dist_km"] = round(float(rt.get("total_distance_km") or 0), 1)
+                        rt["eta_min"] = int(rt.get("total_duration_min") or 0)
 
                     # Lưu thông tin tìm kiếm
                     server_self.update_status(
@@ -1593,14 +1786,85 @@ class NavigatorWebServer:
                         state["alert"] = dict(state["alert"])
                     
                     # Bổ sung các thông số hiện tại
-                    state["alert"]["speed_limit"] = server_self.status.get("speed_limit_now", 50)
-                    state["alert"]["current_speed"] = server_self.status.get("speed_kmh", 0)
+                    state["alert"]["speed_limit"]              = server_self.status.get("speed_limit_now", 60)
+                    state["alert"]["current_speed"]            = server_self.status.get("speed_kmh", 0)
                     state["alert"]["motorcycle_banned_warning"] = server_self.status.get("motorcycle_banned_warning", "")
+                    state["alert"]["camera_dist"]              = server_self.status.get("camera_dist_m", 9999)
+                    state["alert"]["camera_type"]              = server_self.status.get("camera_type", "speed")
+                    state["alert"]["dist_to_turn"]             = server_self.status.get("dist_to_turn")
+                    state["alert"]["turn_direction"]           = server_self.status.get("turn_direction", "")
+                    state["alert"]["arrived_text"]             = server_self.status.get("arrived_text", "")
+                    # Xóa arrived_text sau khi ESP32 đọc
+                    if server_self.status.get("arrived_text"):
+                        server_self.status["arrived_text"] = ""
                     
                     # Reset các tin nhắn/lệnh một lần
                     server_self.device_state["voice"] = None
                     server_self.device_state["stop"] = False
                     self.send_json(state)
+                elif self.path.startswith('/api/map-image'):
+                    # ── TRẢ ẢNH JPEG BẢN ĐỒ GOOGLE MAPS CHO ESP32 ──
+                    # Center = vị trí user hiện tại, có route line màu xanh
+                    import urllib.parse as _up
+                    _qs = _up.parse_qs(_up.urlparse(self.path).query)
+                    _lat = float(_qs.get('lat', [str(server_self.status.get('gps_lat') or 10.8541)])[0])
+                    _lon = float(_qs.get('lon', [str(server_self.status.get('gps_lon') or 106.7878)])[0])
+                    _zoom = int(_qs.get('zoom', ['17'])[0])
+                    _now = time.time()
+                    
+                    # Cache 3 giây, invalidate khi GPS thay đổi > 10m
+                    cache = server_self._map_cache
+                    gps_moved = (abs(_lat - cache['lat']) > 0.0001 or
+                                 abs(_lon - cache['lon']) > 0.0001)
+                    cache_valid = (cache['data'] and
+                                   (_now - cache['ts'] < 3.0) and
+                                   not gps_moved)
+                    
+                    if cache_valid:
+                        img_bytes = cache['data']
+                    else:
+                        # Lấy route polyline hiện tại từ server state
+                        route_poly = server_self.status.get('route_polyline', [])
+                        img_bytes = server_self.nav_engine.get_static_map_jpeg(
+                            _lat, _lon,
+                            route_polyline=route_poly if route_poly else None,
+                            zoom=_zoom,
+                            width=240, height=280
+                        ) if server_self.nav_engine else None
+                        
+                        if img_bytes:
+                            server_self._map_cache = {
+                                'data': img_bytes, 'ts': _now,
+                                'lat': _lat, 'lon': _lon
+                            }
+                        else:
+                            # Fallback: dùng OpenStreetMap tile ghép lại (miễn phí, không cần API)
+                            try:
+                                img_bytes = _get_osm_map_png(_lat, _lon, _zoom, 240, 280,
+                                                             server_self.status.get('route_polyline', []))
+                                if img_bytes:
+                                    server_self._map_cache = {
+                                        'data': img_bytes, 'ts': _now,
+                                        'lat': _lat, 'lon': _lon
+                                    }
+                            except Exception as _osm_e:
+                                print(f"[MapFallback] OSM error: {_osm_e}")
+                                img_bytes = None
+                    
+                    if img_bytes:
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'image/png')
+                        self.send_header('Content-Length', str(len(img_bytes)))
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.send_header('Cache-Control', 'max-age=3')
+                        self.end_headers()
+                        self.wfile.write(img_bytes)
+                    else:
+                        self.send_response(503)
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.end_headers()
+                        self.wfile.write(b'{"error":"map unavailable"}')
+
                 elif self.path == '/api/get-audio':
                     # Trả về luồng âm thanh PCM nhị phân thô cho ESP32 phát qua Loa
                     if hasattr(server_self, 'tts_audio_buffer') and server_self.tts_audio_buffer:
@@ -1867,6 +2131,12 @@ class NavigatorWebServer:
                                 pos[0], pos[1], destination, wp_coords or None
                             )
                             if routes:
+                                # Thêm alias dist_km / eta_min cho ESP32 client
+                                for rt in routes:
+                                    rt.setdefault("camera_count", 0)
+                                    rt.setdefault("max_speed", 60)
+                                    rt["dist_km"] = round(float(rt.get("total_distance_km") or 0), 1)
+                                    rt["eta_min"] = int(rt.get("total_duration_min") or 0)
                                 # Lưu vào status để Web UI polling lấy
                                 server_self.update_status(
                                     pending_routes=routes,
@@ -2023,6 +2293,15 @@ class NavigatorWebServer:
                             )
 
                             poly_full = selected.get("full_polyline", selected.get("polyline", []))
+                            # Lưu tọa độ điểm đến để check arrived (GPS < 30m)
+                            dest_lat_v = None
+                            dest_lon_v = None
+                            if poly_full:
+                                last_pt = poly_full[-1]
+                                dest_lat_v = last_pt[0]
+                                dest_lon_v = last_pt[1]
+                            server_self._arrived = False  # Reset flag mỗi khi bắt đầu tuyến mới
+                            server_self._turn_announced_dist = None  # Reset xi nhan
                             server_self.update_status(
                                 is_navigating=True,
                                 selecting_route=False,
@@ -2031,6 +2310,8 @@ class NavigatorWebServer:
                                 eta_min=selected.get("total_duration_min", 0),
                                 dist_remain_km=selected.get("total_distance_km", 0),
                                 route_polyline=poly_full,
+                                dest_lat=dest_lat_v,
+                                dest_lon=dest_lon_v,
                             )
 
                             pos = server_self.gps.get_current() if server_self.gps else (10.7769, 106.7009)
@@ -2110,7 +2391,7 @@ class NavigatorWebServer:
                     self.send_json({"status": "ok"})
                     
                 elif self.path == '/api/update-gps':
-                    # Định vị gửi từ trình duyệt điện thoại Safari (tiện lợi khi chạy Cloud)
+                    # Định vị gửi từ trình duyệt tăng diện thoại Safari (tiện lợi khi chạy Cloud)
                     # Auto-fix decimal bi mat khi iOS Shortcuts dung kieu "So" (Number)
                     def _fix_coord(v, is_lat=True):
                         if v is None: return None
@@ -2127,21 +2408,84 @@ class NavigatorWebServer:
                     heading = data.get("heading", 0)
                     if lat and lon:
                         server_self.update_status(gps_lat=lat, gps_lon=lon, speed_kmh=speed)
-                        
+
+                        # ── (A) Cảnh báo tốc độ vượt: cooldown 5 phút ──
+                        limit = server_self.status.get('speed_limit_now', 60)
+                        if speed and limit and float(speed) > float(limit) + 5:
+                            now = time.time()
+                            if now - server_self._speed_alert_ts >= server_self.SPEED_ALERT_COOLDOWN:
+                                server_self._speed_alert_ts = now
+                                alert_msg = f"Yêu cầu chạy đúng tốc độ quy định {int(limit)} km một giờ"
+                                server_self.trigger_voice_alert(alert_msg)
+                                server_self.device_state['voice'] = {"text": alert_msg, "has_audio": False}
+
+                        # ── (B) Kiểm tra camera gần nhất và cảnh báo trước 50m ──
+                        if server_self.cam_engine:
+                            cams = server_self.cam_engine.get_nearby_cameras(lat, lon)
+                            if cams:
+                                nearest = cams[0]
+                                cam_dist = nearest.get('dist_m', 9999)
+                                cam_type = nearest.get('type', 'speed')
+                                server_self.update_status(
+                                    camera_dist_m=cam_dist,
+                                    camera_type=cam_type
+                                )
+                                # Cảnh báo khi camera < 50m
+                                if cam_dist <= server_self.CAMERA_ALERT_DIST:
+                                    now = time.time()
+                                    last_cam_warn = server_self.status.get('_last_cam_warn_ts', 0)
+                                    if now - last_cam_warn > 10:  # cooldown 10s giữa 2 cảnh báo
+                                        server_self.status['_last_cam_warn_ts'] = now
+                                        type_name = "tốc độ" if cam_type == "speed" else "vượt đèn đỏ"
+                                        cam_msg = f"Phía trước {int(cam_dist)} mét có camera phạt nguội {type_name}"
+                                        server_self.trigger_voice_alert(cam_msg)
+
+                        # ── (C) Thông báo quẹo trước 100m, phát xi nhan ×3 ──
+                        turn_dist = server_self.status.get('dist_to_turn')
+                        turn_dir = server_self.status.get('turn_direction')
+                        if (turn_dist is not None and turn_dir and
+                                float(turn_dist) <= 100 and
+                                server_self._turn_announced_dist != turn_dist):
+                            server_self._turn_announced_dist = turn_dist
+                            side = "phải" if "right" in str(turn_dir).lower() else "trái"
+                            repeat = f"hãy bật xi nhan {side}"
+                            turn_msg = (f"Phía trước {int(turn_dist)} mét quẹo {side}, "
+                                        f"{repeat}, {repeat}, {repeat}")
+                            server_self.trigger_voice_alert(turn_msg)
+                            server_self.device_state['voice'] = {"text": turn_msg, "has_audio": False}
+
+                        # ── (D) Đã đến nơi khi GPS < 30m từ đích ──
+                        dest_lat = server_self.status.get('dest_lat')
+                        dest_lon = server_self.status.get('dest_lon')
+                        if (dest_lat and dest_lon and
+                                not server_self._arrived and
+                                server_self.status.get('is_navigating')):
+                            import math as _math
+                            dlat = lat - dest_lat
+                            dlon = lon - dest_lon
+                            dist_m = _math.sqrt(dlat**2 + dlon**2) * 111320
+                            if dist_m < 30:
+                                server_self._arrived = True
+                                arrived_msg = "U, địa điểm của bạn đã đến. Chúc mừng!"
+                                server_self.trigger_voice_alert(arrived_msg)
+                                server_self.update_status(
+                                    arrived_text=arrived_msg,
+                                    is_navigating=False
+                                )
+                                server_self._clear_journey_state()
+
                         # Check motorcycle ban
                         osm_engine = None
                         if server_self.cam_engine and hasattr(server_self.cam_engine, 'osm'):
                             osm_engine = server_self.cam_engine.osm
                         elif server_self.nav_engine and hasattr(server_self.nav_engine, 'osm'):
                             osm_engine = server_self.nav_engine.osm
-                            
+
                         if osm_engine and hasattr(osm_engine, 'check_motorcycle_ban'):
                             is_banned, ban_road_name = osm_engine.check_motorcycle_ban(lat, lon, search_radius_m=45)
                             if is_banned:
                                 warning_msg = f"⚠️ CẤM XE MÁY: {ban_road_name}"
                                 server_self.update_status(motorcycle_banned_warning=warning_msg)
-                                
-                                # Trigger voice warning (cooldown 20s)
                                 last_ban_warn = server_self.status.get("last_motorcycle_banned_warn_time", 0)
                                 if time.time() - last_ban_warn > 20:
                                     server_self.status["last_motorcycle_banned_warn_time"] = time.time()
@@ -2151,11 +2495,36 @@ class NavigatorWebServer:
                                 server_self.update_status(motorcycle_banned_warning="")
 
                         if server_self.gps:
-                            # Cập nhật toạ độ thủ công vào GPSTracker
                             server_self.gps._manual_loc = (lat, lon, heading, 5.0)
                             server_self.gps._manual_speed = speed
                     self.send_json({"status": "ok"})
-                    
+
+                elif self.path == '/api/waze-cameras':
+                    # ── NHẬN DỮ LIỆU CAMERA TỪ IPHONE SHORTCUTS (WAZE/WYN) ──
+                    cameras = data.get('cameras', [])
+                    if cameras and server_self.cam_engine:
+                        merged = getattr(server_self.cam_engine, '_merged_cameras', [])
+                        existing = {(c['lat'], c['lon']) for c in merged}
+                        added = 0
+                        for cam in cameras:
+                            cam_lat = cam.get('lat')
+                            cam_lon = cam.get('lon')
+                            cam_type = cam.get('type', 'speed')
+                            if cam_lat and cam_lon:
+                                key = (round(cam_lat, 4), round(cam_lon, 4))
+                                if key not in existing:
+                                    merged.append({
+                                        'lat': cam_lat, 'lon': cam_lon,
+                                        'type': cam_type, 'source': 'waze_shortcut'
+                                    })
+                                    existing.add(key)
+                                    added += 1
+                        server_self.cam_engine._merged_cameras = merged
+                        print(f"[WazeCameras] Đã merge {added} camera mới từ iPhone Shortcuts. Tổng: {len(merged)}")
+                        self.send_json({'status': 'ok', 'added': added, 'total': len(merged)})
+                    else:
+                        self.send_json({'status': 'ok', 'added': 0})
+
                 else:
                     self.send_response(404)
                     self.end_headers()

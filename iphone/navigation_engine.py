@@ -1,6 +1,9 @@
 # iphone/navigation_engine.py
 # Pythonista 3 - Google Maps + OpenStreetMap Navigation Engine
-# Hỗ trợ Google Places API để tìm POI chi tiết (quán cafe, nhà hàng, ...)
+# Hỗ trợ Google Places API, Foursquare Places v3 để tìm POI chi tiết (quán cafe, nhà hàng, ...)
+
+# ─── Foursquare Places API v3 (100% miễn phí, 100k req/tháng) ───
+FOURSQUARE_API_KEY = "NSGAT4LTRTSZ51WNKHLUJQTG423QDM2TH5GFKBSYZE3JHHND"
 import json
 import time
 import math
@@ -93,16 +96,114 @@ class NavigationEngine:
                 loc = data[0]
                 lat = float(loc["lat"])
                 lon = float(loc["lon"])
-                display_name = loc["display_name"].split(",")[0]  # Lấy tên ngắn gọn
+                display_name = loc["display_name"].split(",")[0]
                 print(f"[OSM Geocode] Thành công: {display_name} -> ({lat}, {lon})")
                 return (lat, lon, display_name)
             else:
-                print(f"[OSM Geocode] Không tìm thấy địa điểm: {place_name}")
-                return None
+                print(f"[OSM Geocode] Không tìm thấy: {place_name}, thử Overpass...")
         except Exception as e:
-            print("[OSM Geocode] Lỗi kết nối Nominatim:", e)
-            # Fallback mock data nếu mất mạng
-            return (10.7769, 106.7009, place_name)
+            print("[OSM Geocode] Lỗi Nominatim:", e)
+
+        # ─── 3. PHOTON (Komoot) — fuzzy search tốt cho POI tiếng Việt ───
+        try:
+            print(f"[Photon] Tìm POI fuzzy: '{place_name}'...")
+            r3 = requests.get(
+                "https://photon.komoot.io/api/",
+                params={"q": place_name, "countrycode": "vn", "limit": 3, "lang": "vi"},
+                timeout=10,
+                headers={"User-Agent": "TequilaMap/2.0"}
+            )
+            features = r3.json().get("features", [])
+            if features:
+                f = features[0]
+                coords = f["geometry"]["coordinates"]  # [lon, lat]
+                lat, lon = coords[1], coords[0]
+                props = f.get("properties", {})
+                display_name = props.get("name") or props.get("street") or place_name
+                print(f"[Photon] Thành công: {display_name} -> ({lat}, {lon})")
+                return (lat, lon, display_name)
+            else:
+                print(f"[Photon] Không tìm thấy: {place_name}, thử Foursquare...")
+        except Exception as e3:
+            print("[Photon] Lỗi:", e3)
+
+        # ─── 4. FOURSQUARE PLACES v3 (Tìm quán nhỏ, POI ở VN rất tốt) ───
+        try:
+            fsq_result = self._foursquare_search(place_name, near="Ho Chi Minh City, Vietnam")
+            if fsq_result:
+                print(f"[Foursquare] ✅ Tìm thấy: {fsq_result[2]} -> ({fsq_result[0]}, {fsq_result[1]})")
+                return fsq_result
+            else:
+                print(f"[Foursquare] Không tìm thấy: {place_name}, thử Overpass...")
+        except Exception as e4:
+            print("[Foursquare] Lỗi:", e4)
+
+        # ─── 5. OVERPASS API (Fallback cuối) ───
+        try:
+            import re as _re
+            kw = _re.sub(r'(lê văn|nguyễn|trần|đường|quận|phường|huyện|tp\.?|thành phố|hồ chí minh|hà nội).*', '', place_name, flags=_re.IGNORECASE).strip()
+            kw = _re.sub(r'(cafe|quán|nhà hàng|tiệm)\s*', '', kw, flags=_re.IGNORECASE).strip()
+            if len(kw) < 3:
+                kw = place_name
+            print(f"[Overpass] Tìm POI: '{kw}'...")
+            overpass_q = f'[out:json][timeout:25];area["name"="Việt Nam"]["admin_level"="2"]->.vn;(node(area.vn)["name"~"{kw}",i];way(area.vn)["name"~"{kw}",i];);out center 5;'
+            r2 = requests.post(
+                "https://overpass-api.de/api/interpreter",
+                data=overpass_q, timeout=25,
+                headers={"User-Agent": "TequilaMap/2.0"}
+            )
+            elems = r2.json().get("elements", [])
+            if elems:
+                best = elems[0]
+                lat = float(best.get("lat") or best.get("center", {}).get("lat", 0))
+                lon = float(best.get("lon") or best.get("center", {}).get("lon", 0))
+                display_name = best.get("tags", {}).get("name", place_name)
+                print(f"[Overpass] Thành công: {display_name} -> ({lat}, {lon})")
+                return (lat, lon, display_name)
+            else:
+                print(f"[Overpass] Không tìm thấy: {kw}")
+        except Exception as e2:
+            print("[Overpass] Lỗi:", e2)
+
+        # ─── Cuối cùng: fallback về trung tâm HCMC ───
+        print(f"[Geocode] Tất cả fallback thất bại — dùng trung tâm HCMC cho: {place_name}")
+        return (10.7769, 106.7009, place_name)
+
+    def _foursquare_search(self, query, near="Ho Chi Minh City, Vietnam", limit=3):
+        """Foursquare Places API v3 — Tìm POI theo tên (quán nhỏ, tiệm ăn, cửa hàng...).
+        
+        Miễn phí 100k req/tháng. Tốt hơn Overpass cho POI tên tiếng Việt phổ thông.
+        Trả về (lat, lon, tên) hoặc None nếu không tìm thấy.
+        """
+        if not requests or not FOURSQUARE_API_KEY:
+            return None
+        try:
+            r = requests.get(
+                "https://api.foursquare.com/v3/places/search",
+                params={"query": query, "near": near, "limit": limit, "fields": "name,geocodes,location"},
+                headers={"Authorization": FOURSQUARE_API_KEY, "Accept": "application/json"},
+                timeout=8
+            )
+            if r.status_code != 200:
+                print(f"[Foursquare] HTTP {r.status_code}")
+                return None
+            results = r.json().get("results", [])
+            if not results:
+                return None
+            best = results[0]
+            geo = best.get("geocodes", {}).get("main", {})
+            lat = geo.get("latitude")
+            lon = geo.get("longitude")
+            name = best.get("name", query)
+            loc = best.get("location", {})
+            address = loc.get("formatted_address", "")
+            display = f"{name}, {address}" if address else name
+            if lat and lon:
+                return (float(lat), float(lon), display)
+            return None
+        except Exception as e:
+            print(f"[Foursquare] Lỗi _foursquare_search: {e}")
+            return None
 
     def _places_text_search(self, query, region="vn"):
         """Google Places Text Search API - Tìm POI chi tiết (quán cafe, nhà hàng, cửa hàng...).
@@ -157,7 +258,9 @@ class NavigationEngine:
             return None
 
     def search_nearby_places(self, lat, lon, keyword, radius_m=2000, max_results=5):
-        """Tìm kiếm địa điểm gần vị trí hiện tại theo từ khóa (dùng Google Places Nearby Search).
+        """Tìm kiếm địa điểm gần vị trí hiện tại theo từ khóa.
+        
+        Ưu tiên: Foursquare Places v3 (miễn phí, tốt cho VN) → Google Places Nearby (fallback)
         
         Args:
             lat, lon: Toạ độ vị trí hiện tại
@@ -168,7 +271,67 @@ class NavigationEngine:
         Returns:
             list of dict: [{name, lat, lon, address, rating, distance_m}, ...]
         """
-        if not self.api_key or not requests:
+        if not requests:
+            return []
+
+        # ─── 1. FOURSQUARE PLACES v3 Nearby (Miễn phí, rất tốt cho VN) ───
+        if FOURSQUARE_API_KEY:
+            try:
+                print(f"[Foursquare Nearby] Tìm '{keyword}' trong bán kính {radius_m}m...")
+                r = requests.get(
+                    "https://api.foursquare.com/v3/places/search",
+                    params={
+                        "query": keyword,
+                        "ll": f"{lat},{lon}",
+                        "radius": min(radius_m, 100000),
+                        "limit": max_results,
+                        "fields": "name,geocodes,location,rating,hours",
+                    },
+                    headers={"Authorization": FOURSQUARE_API_KEY, "Accept": "application/json"},
+                    timeout=8
+                )
+                if r.status_code == 200:
+                    fsq_results = r.json().get("results", [])
+                    places = []
+                    for place in fsq_results:
+                        geo = place.get("geocodes", {}).get("main", {})
+                        p_lat = geo.get("latitude")
+                        p_lon = geo.get("longitude")
+                        if not p_lat or not p_lon:
+                            continue
+                        p_lat, p_lon = float(p_lat), float(p_lon)
+                        name = place.get("name", "Không tên")
+                        loc = place.get("location", {})
+                        address = loc.get("formatted_address", loc.get("address", ""))
+                        rating = place.get("rating", 0)
+                        dist = self._distance_m(lat, lon, p_lat, p_lon)
+                        open_now = None
+                        hours = place.get("hours", {})
+                        if hours:
+                            open_now = hours.get("open_now")
+                        places.append({
+                            "name": name,
+                            "lat": p_lat,
+                            "lon": p_lon,
+                            "address": address,
+                            "rating": rating,
+                            "distance_m": int(dist),
+                            "open_now": open_now,
+                            "source": "foursquare",
+                        })
+                    places.sort(key=lambda x: x["distance_m"])
+                    if places:
+                        print(f"[Foursquare Nearby] ✅ Tìm được {len(places)} địa điểm '{keyword}'.")
+                        return places
+                    else:
+                        print(f"[Foursquare Nearby] Không tìm thấy '{keyword}', thử Google...")
+                else:
+                    print(f"[Foursquare Nearby] HTTP {r.status_code}, thử Google...")
+            except Exception as e:
+                print(f"[Foursquare Nearby] Lỗi: {e}")
+
+        # ─── 2. GOOGLE PLACES NEARBY (Fallback nếu có API key hợp lệ) ───
+        if not self.api_key:
             return []
         
         url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
@@ -196,10 +359,7 @@ class NavigationEngine:
                 name = place.get("name", "Không tên")
                 address = place.get("vicinity", "")
                 rating = place.get("rating", 0)
-                
-                # Tính khoảng cách
                 dist = self._distance_m(lat, lon, p_lat, p_lng)
-                
                 results.append({
                     "name": name,
                     "lat": p_lat,
@@ -208,9 +368,8 @@ class NavigationEngine:
                     "rating": rating,
                     "distance_m": int(dist),
                     "open_now": place.get("opening_hours", {}).get("open_now", None),
+                    "source": "google",
                 })
-            
-            # Sắp xếp theo khoảng cách gần nhất
             results.sort(key=lambda x: x["distance_m"])
             print(f"[Google Places Nearby] Tìm được {len(results)} địa điểm '{keyword}'.")
             return results
@@ -785,3 +944,126 @@ class NavigationEngine:
                 "dest_name": dest_name,
             }]
         return []
+
+    # ─────────────────────────────────────────────────────────────
+    # 7. GOOGLE MAPS STATIC API — Tạo ảnh bản đồ JPEG cho ESP32
+    # ─────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def polyline_encode(coords):
+        """Encode danh sách [(lat, lon)] thành Google Encoded Polyline string.
+        
+        Dùng cho Google Maps Static API path parameter.
+        Thuật toán: https://developers.google.com/maps/documentation/utilities/polylinealgorithm
+        """
+        def _encode_value(value):
+            value = int(round(value * 1e5))
+            value = value << 1
+            if value < 0:
+                value = ~value
+            chunks = []
+            while value >= 0x20:
+                chunks.append(chr((0x20 | (value & 0x1f)) + 63))
+                value >>= 5
+            chunks.append(chr(value + 63))
+            return ''.join(chunks)
+
+        result = []
+        prev_lat = 0
+        prev_lon = 0
+        for lat, lon in coords:
+            result.append(_encode_value(lat - prev_lat))
+            result.append(_encode_value(lon - prev_lon))
+            prev_lat = lat
+            prev_lon = lon
+        return ''.join(result)
+
+    def get_static_map_jpeg(self, lat, lon, route_polyline=None,
+                             heading=0, zoom=17,
+                             width=240, height=280,
+                             remaining_only=True):
+        """Tạo ảnh JPEG bản đồ Google Maps cho màn hình ESP32 2.8" (portrait).
+        
+        Bản đồ luôn center vào vị trí hiện tại của user (lat, lon).
+        Route line màu xanh đậm (#0055ff) nếu có.
+        Mũi tên xanh đánh dấu vị trí user.
+        Cập nhật theo GPS realtime → bản đồ "di chuyển theo user" như Google Maps.
+        
+        Args:
+            lat, lon: GPS hiện tại của user
+            route_polyline: list [(lat,lon)] — chỉ phần còn lại chưa đi (remaining)
+            heading: hướng di chuyển (độ) — dùng để rotate marker
+            zoom: zoom level (17 = rõ tên đường, 16 = rộng hơn)
+            width, height: kích thước ảnh (240×280 cho portrait ESP32)
+            remaining_only: True = chỉ vẽ route còn lại (biến mất theo đường đã đi)
+            
+        Returns:
+            bytes: JPEG image data (~15-30KB) hoặc None nếu lỗi
+        """
+        if not self.api_key or not requests:
+            return None
+
+        # ── 1. Xây dựng path parameter từ route polyline ──
+        path_str = ""
+        if route_polyline and len(route_polyline) >= 2:
+            try:
+                # Tìm điểm trên route gần user nhất để vẽ từ đó trở đi
+                if remaining_only:
+                    min_dist = float('inf')
+                    start_idx = 0
+                    for i, (rlat, rlon) in enumerate(route_polyline):
+                        d = math.sqrt((rlat - lat)**2 + (rlon - lon)**2)
+                        if d < min_dist:
+                            min_dist = d
+                            start_idx = i
+                    remaining = route_polyline[start_idx:]
+                else:
+                    remaining = route_polyline
+
+                if len(remaining) >= 2:
+                    # Giới hạn số điểm để tránh URL quá dài (max ~150 điểm)
+                    if len(remaining) > 150:
+                        step = len(remaining) // 150
+                        remaining = remaining[::step]
+                    encoded = self.polyline_encode(remaining)
+                    # Route: màu xanh đậm #0055ff, độ dày 5px, trong suốt 80%
+                    path_str = f"&path=color:0x0055ffCC|weight:5|enc:{urllib.parse.quote(encoded)}"
+            except Exception as e:
+                print(f"[StaticMap] Lỗi encode polyline: {e}")
+
+        # ── 2. Marker vị trí user (mũi tên màu đỏ - dễ nhìn) ──
+        # Dùng icon mặc định của Static Maps (không cần hosting icon riêng)
+        marker_str = f"&markers=color:red|size:small|{lat},{lon}"
+
+        # ── 3. Gọi Google Maps Static API ──
+        # maptype=roadmap: bản đồ đường phố tiếng Việt
+        url = (
+            f"https://maps.googleapis.com/maps/api/staticmap"
+            f"?center={lat},{lon}"
+            f"&zoom={zoom}"
+            f"&size={width}x{height}"
+            f"&maptype=roadmap"
+            f"&language=vi"
+            f"&scale=1"
+            f"{marker_str}"
+            f"{path_str}"
+            f"&key={self.api_key}"
+        )
+
+        try:
+            r = requests.get(url, timeout=6)
+            if r.status_code == 200:
+                content_type = r.headers.get('Content-Type', '')
+                if 'image' in content_type:
+                    return r.content  # PNG bytes
+                else:
+                    print(f"[StaticMap] Phản hồi không phải ảnh: {content_type}")
+                    print(f"[StaticMap] Body: {r.text[:200]}")
+                    return None
+            else:
+                print(f"[StaticMap] HTTP {r.status_code}: {r.text[:200]}")
+                return None
+        except Exception as e:
+            print(f"[StaticMap] Lỗi kết nối Google Static Maps: {e}")
+            return None
+
