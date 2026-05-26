@@ -214,3 +214,73 @@ class VoiceHandler:
             print("[Voice] ❌ Lỗi truyền tải âm thanh qua HTTP/HTTPS:", e)
             return False
 
+    def speak_tts(self, text):
+        """Gửi text lên Cloud server để TTS → phát âm thanh qua loa I2S.
+        
+        Dùng cho: thông báo xi nhan, cảnh báo tốc độ, camera, đến nơi...
+        Endpoint: POST /api/tts với body JSON {"text": "..."}
+        Server dùng Google TTS/Gemini → trả về PCM audio bytes
+        """
+        if not text:
+            return
+        try:
+            import socket, json as _json
+            host = config.CLOUD_SERVER_HOST if config.USE_CLOUD_SERVER else None
+            port = config.CLOUD_SERVER_PORT if config.USE_CLOUD_SERVER else 8080
+            if not host:
+                print("[TTS] Chưa có host, bỏ qua TTS.")
+                return
+
+            payload = _json.dumps({"text": text}).encode("utf-8")
+            addr = socket.getaddrinfo(host, port)[0][-1]
+            s = socket.socket()
+            s.settimeout(8.0)
+            s.connect(addr)
+
+            # SSL nếu Cloud
+            if config.USE_CLOUD_SERVER and config.CLOUD_SERVER_SSL:
+                try:
+                    import ussl
+                    s = ussl.wrap_socket(s, server_hostname=host)
+                except Exception:
+                    try:
+                        import ssl
+                        s = ssl.wrap_socket(s, server_hostname=host)
+                    except Exception as e:
+                        print("[TTS] SSL lỗi:", e)
+
+            req = (
+                f"POST /api/tts HTTP/1.1\r\n"
+                f"Host: {host}\r\n"
+                f"Content-Type: application/json\r\n"
+                f"Content-Length: {len(payload)}\r\n"
+                f"Connection: close\r\n"
+                f"\r\n"
+            ).encode() + payload
+            s.send(req)
+
+            # Đọc response (PCM audio bytes sau HTTP header)
+            resp = bytearray()
+            while True:
+                chunk = s.recv(1024)
+                if not chunk:
+                    break
+                resp.extend(chunk)
+            s.close()
+
+            # Tìm body sau \r\n\r\n
+            sep = resp.find(b"\r\n\r\n")
+            if sep > 0:
+                audio_bytes = bytes(resp[sep + 4:])
+                if audio_bytes and self.audio_out:
+                    self.audio_out.write(audio_bytes)
+                    print(f"[TTS] ✅ Phát xong: '{text[:40]}...'")
+                else:
+                    print("[TTS] Không có audio trả về.")
+        except Exception as e:
+            print("[TTS] Lỗi:", e)
+
+    @property
+    def speaker(self):
+        """Alias cho audio_out (tương thích với greeting.py)."""
+        return self.audio_out

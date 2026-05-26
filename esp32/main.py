@@ -373,6 +373,15 @@ def main():
     print("\n[Main] ✅ Hệ thống sẵn sàng! Vào vòng lặp chính.\n")
 
     # ═══════ MAIN LOOP ═══════
+    # Map fetch timer (cập nhật bản đồ Google Maps mỗi MAP_UPDATE_SEC giây)
+    last_map_fetch_ms  = time.ticks_ms()
+    MAP_FETCH_INTERVAL = getattr(config, 'MAP_UPDATE_SEC', 3) * 1000  # ms
+    _last_map_lat      = 0.0
+    _last_map_lon      = 0.0
+
+    # Turn announcement tracker (tránh thông báo 2 lần cùng 1 đoạn)
+    _last_turn_dist = None
+
     while True:
         now_ms = time.ticks_ms()
         lv.task_handler()  # LVGL render
@@ -448,6 +457,56 @@ def main():
                 try:
                     cloud_data = json.loads(body)
                     process_cloud_status(cloud_data, wifi_server, voice, map_display)
+
+                    # ── (A) Fetch bản đồ Google Maps mỗi 3 giây ──
+                    # Center = GPS hiện tại → bản đồ follow user như Google Maps
+                    now_secs = time.ticks_diff(now_ms, last_map_fetch_ms)
+                    cur_lat = cloud_data.get('gps_lat') or 0
+                    cur_lon = cloud_data.get('gps_lon') or 0
+                    gps_moved = (abs(cur_lat - _last_map_lat) > 0.00005 or
+                                 abs(cur_lon - _last_map_lon) > 0.00005)
+
+                    if cur_lat and (now_secs >= MAP_FETCH_INTERVAL or gps_moved):
+                        last_map_fetch_ms = now_ms
+                        _last_map_lat = cur_lat
+                        _last_map_lon = cur_lon
+                        try:
+                            zoom = 17
+                            img_bytes = wifi_server._https_get(
+                                f"/api/map-image?lat={cur_lat}&lon={cur_lon}&zoom={zoom}",
+                                raw=True  # trả bytes chương sập parse JSON
+                            )
+                            if img_bytes and len(img_bytes) > 500:
+                                map_display.update_map_image(img_bytes)
+                        except Exception as _me:
+                            print("[Map] Lỗi fetch bản đồ:", _me)
+
+                    # ── (B) Xi nhan ×3 khi quẹo trong 100m ──
+                    turn_dist = cloud_data.get('dist_to_turn')
+                    turn_dir  = cloud_data.get('turn_direction', '')
+                    if (turn_dist and float(turn_dist) <= 100 and turn_dir and
+                            turn_dist != _last_turn_dist):
+                        _last_turn_dist = turn_dist
+                        side = 'phải' if 'right' in str(turn_dir).lower() else 'trái'
+                        msg = (f'Phía trước {int(turn_dist)} mét quẹo {side}, '
+                               f'hãy bật xi nhan {side}, ' * 3)
+                        # Phát local TTS
+                        try: voice.speak_tts(msg)
+                        except Exception: pass
+                    elif not turn_dist or float(turn_dist) > 150:
+                        _last_turn_dist = None  # reset khi qua khúc quẹo
+
+                    # ── (C) Đã đến nơi ──
+                    arr_text = cloud_data.get('arrived_text', '')
+                    if arr_text and current_state == STATE_NAVIGATING:
+                        current_state = STATE_ARRIVED
+                        map_display.show_screen_state('arrived')
+                        map_display.update_connection_status(True, True)
+                        journey.is_active = False
+                        # Beep thông báo
+                        try: voice.play_beep(1200, 500)
+                        except Exception: pass
+
                 except Exception as e:
                     print("[Poll] Parse lỗi:", e)
 

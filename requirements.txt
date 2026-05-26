@@ -5,3 +5,6 @@ flask
 cryptography
 findmy
 SpeechRecognition
+gtts
+Pillow
+polyline

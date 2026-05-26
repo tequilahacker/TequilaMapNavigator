@@ -40,7 +40,9 @@ current_hud = {
     "lat": 10.85417, "lon": 106.78779, "speed": 0, "heading": 0,
     "speed_limit": 60, "camera_dist": 9999, "camera_type": "",
     "instruction": "Đang chờ kết nối...", "eta": 0, "distance_remain": 0.0,
-    "motorcycle_banned_warning": ""
+    "motorcycle_banned_warning": "",
+    "turn_dist": None, "turn_direction": "",
+    "arrived_text": ""
 }
 is_running = True
 is_typing = False
@@ -52,8 +54,8 @@ is_simulating = False
 sim_thread = None
 available_routes = []
 
-# Google Maps API Key để nhúng vào URL browser
-GOOGLE_MAPS_API_KEY = "AIzaSyA_8KDFY3kn4B7zF7E6pDOz10aAGnj0kJ4"
+# Google Maps API Key mới của Tequila
+GOOGLE_MAPS_API_KEY = "AIzaSyB11vo0te9tTtdBZogm3ltE2X7lHN20zfQ"
 
 # Theo dõi tuyến đường đích hiện tại
 current_destination_name = ""
@@ -294,6 +296,17 @@ def print_hud():
     print(f"│ 🗺️ Chỉ dẫn: {current_hud['instruction'][:48].ljust(48)} │")
     print("└────────────────────────────────────────────────────────┘\033[0m")
     
+    # Turn notification (xi nhan)
+    turn_d = current_hud.get('turn_dist')
+    turn_dir = current_hud.get('turn_direction', '')
+    if turn_d and float(turn_d) <= 100 and turn_dir:
+        side = 'PHẢI ➡️' if 'right' in str(turn_dir).lower() else 'TRÁI ⬅️'
+        print(f"\033[93m🚦 XIN HAN {side} - CACH {int(float(turn_d))}m! ×3 LẦN ⚠\033[0m")
+
+    # Đã đến nơi
+    if current_hud.get('arrived_text'):
+        print(f"\033[92m✅ {current_hud['arrived_text']}\033[0m")
+
     print(f"🕒 ETA: {current_hud['eta']} phút  |  🏁 Còn lại: {current_hud['distance_remain']} km")
     W = 62
     print("═" * W)
@@ -490,6 +503,9 @@ def polling_loop():
                         current_hud["camera_dist"] = al.get("camera_dist", 9999)
                         current_hud["camera_type"] = al.get("camera_type", "")
                         current_hud["motorcycle_banned_warning"] = al.get("motorcycle_banned_warning", "")
+                        current_hud["turn_dist"] = al.get("dist_to_turn")
+                        current_hud["turn_direction"] = al.get("turn_direction", "")
+                        current_hud["arrived_text"] = al.get("arrived_text", "")
                         hud_changed = True
                         
                     # 4. Cập nhật chỉ đường chữ và âm thanh

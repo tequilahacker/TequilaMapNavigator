@@ -31,9 +31,11 @@ FINDMY_PUBLIC_KEY  = bytes([  # ← KEY THẬT - đã gen ngày 25/05/2026
 
 # ─── DISPLAY (SPI) - ILI9341 / ST7789 ───
 # ⚠️ Chỉnh lại các pin này theo board thực tế của bạn
-DISPLAY_WIDTH    = 320
-DISPLAY_HEIGHT   = 240
-DISPLAY_ROTATION = 1  # 0=Portrait, 1=Landscape, 2=Portrait Flip, 3=Landscape Flip
+DISPLAY_WIDTH    = 240   # Portrait: 240 rộng
+DISPLAY_HEIGHT   = 320   # Portrait: 320 cao
+DISPLAY_ROTATION = 0    # 0 = Portrait (dọc) ← thiết bị xe máy cầm dọc
+MAP_AREA_HEIGHT  = 280   # Vùng bản đồ (px): tổng 320 - HUD 40px
+HUD_HEIGHT       = 40    # Thanh HUD dưới cùng (tốc độ + chỉ dẫn)
 
 TFT_MOSI = 13  # GPIO13 - SPI MOSI
 TFT_CLK  = 14  # GPIO14 - SPI CLK
@@ -76,8 +78,9 @@ MIC_GAIN        = 32      # Gain amplifier factor
 VOICE_RECORD_MS = 5000    # 5 giây ghi âm tối đa
 
 # ─── MAP DISPLAY ───
-MAP_ROUTE_COLOR    = (0, 120, 255)    # Xanh dương - route
+MAP_ROUTE_COLOR    = (0, 85, 255)     # Xanh đậm - route Google Maps
 MAP_CAM_COLOR      = (255, 50, 50)    # Đỏ - camera
-MAP_POS_COLOR      = (46, 204, 113)   # Xanh lá - vị trí hiện tại
-MAP_BG_COLOR       = (15, 15, 25)     # Xanh đen - nền bản đồ
-CAMERA_ALERT_DIST  = 300              # Mét - cảnh báo khi cách camera <= 300m
+MAP_POS_COLOR      = (255, 0, 0)      # Đỏ - vị trí hiện tại (marker)
+MAP_BG_COLOR       = (15, 15, 25)     # Xanh đen - nền fallback
+CAMERA_ALERT_DIST  = 50               # Mét - cảnh báo khi cách camera <= 50m
+MAP_UPDATE_SEC     = 3                # Giây - tần suất fetch bản đồ từ server

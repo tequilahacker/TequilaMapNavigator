@@ -1929,8 +1929,48 @@ class NavigatorWebServer:
             def do_POST(self):
                 content_len = int(self.headers.get('Content-Length', 0))
                 
+                # ─── 0. TTS: ESP32 gửi text → server trả về audio PCM ───
+                if self.path == '/api/tts':
+                    tts_data = self.rfile.read(content_len)
+                    try:
+                        tts_req = json.loads(tts_data) if tts_data else {}
+                        tts_text = tts_req.get("text", "")
+                    except Exception:
+                        tts_text = ""
+
+                    if tts_text:
+                        try:
+                            # Dùng gTTS (Google Text-to-Speech) tạo MP3 → convert sang PCM
+                            from gtts import gTTS
+                            import io, subprocess
+                            tts_obj = gTTS(text=tts_text, lang='vi', slow=False)
+                            mp3_buf = io.BytesIO()
+                            tts_obj.write_to_fp(mp3_buf)
+                            mp3_buf.seek(0)
+                            # Convert MP3 → raw PCM 16kHz 16-bit mono bằng ffmpeg
+                            proc = subprocess.run(
+                                ["ffmpeg", "-i", "pipe:0", "-f", "s16le",
+                                 "-ar", "16000", "-ac", "1", "pipe:1"],
+                                input=mp3_buf.read(), capture_output=True, timeout=10
+                            )
+                            pcm_bytes = proc.stdout
+                            if pcm_bytes:
+                                self.send_response(200)
+                                self.send_header("Content-Type", "audio/pcm")
+                                self.send_header("Content-Length", str(len(pcm_bytes)))
+                                self.end_headers()
+                                self.wfile.write(pcm_bytes)
+                                print(f"[TTS] ✅ Gửi {len(pcm_bytes)//1024}KB PCM cho '{tts_text[:40]}'")
+                            else:
+                                self.send_json({"error": "ffmpeg failed"}, 500)
+                        except Exception as e:
+                            print(f"[TTS] Lỗi: {e}")
+                            self.send_json({"error": str(e)}, 500)
+                    else:
+                        self.send_json({"error": "no text"}, 400)
+
                 # ─── 1. TIẾP NHẬN FILE GHI ÂM TỪ MIC ESP32 (Raw PCM Binary hoặc Simulator Text) ───
-                if self.path == '/api/voice-command':
+                elif self.path == '/api/voice-command':
                     content_type = self.headers.get('Content-Type', '')
                     if 'application/json' in content_type:
                         audio_data = self.rfile.read(content_len)

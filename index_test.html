@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>🏍️ Tequila Navigator Premium</title>
+<style>
+  :root {
+    --bg: #06060c;
+    --panel: rgba(18, 18, 32, 0.75);
+    --panel-border: rgba(0, 191, 255, 0.2);
+    --blue: #00bfff;
+    --green: #00ff87;
+    --red: #ff3366;
+    --orange: #ff9900;
+    --text: #f0f3f8;
+    --sub: #90a0b7;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  }
+  
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    min-height: 100vh;
+    padding: 16px;
+    background-image: radial-gradient(circle at 50% 5%, #181b36 0%, #06060c 80%);
+    overflow-x: hidden;
+  }
+  
+  header {
+    margin-bottom: 16px;
+    text-align: center;
+  }
+  
+  h1 {
+    color: var(--blue);
+    font-size: 24px;
+    font-weight: 900;
+    letter-spacing: 3px;
+    text-shadow: 0 0 15px rgba(0, 191, 255, 0.5);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .subtitle {
+    font-size: 11px;
+    color: var(--sub);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-top: 4px;
+    font-weight: 600;
+  }
+  
+  .card {
+    background: var(--panel);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-radius: 24px;
+    padding: 20px;
+    margin-bottom: 16px;
+    border: 1px solid var(--panel-border);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  
+  .card-title {
+    color: var(--blue);
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* Map Container */
+  .map-wrapper {
+    position: relative;
+    border-radius: 24px;
+    overflow: hidden;
+    border: 1px solid rgba(0, 191, 255, 0.25);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+    margin-bottom: 16px;
+  }
+
+  #map {
+    height: 320px;
+    width: 100%;
+    z-index: 1;
+  }
+
+  /* Dark mode Leaflet overlay */
+  .leaflet-container {
+    background: #06060c !important;
+  }
+  .leaflet-tile {
+    filter: brightness(0.55) invert(1) contrast(2.8) hue-rotate(200deg) saturate(0.25) !important;
+  }
+  
+  input[type=text] {
+    width: 100%;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(0, 191, 255, 0.2);
+    border-radius: 14px;
+    color: var(--text);
+    padding: 14px 16px;
+    font-size: 15px;
+    outline: none;
+    margin-bottom: 12px;
+    transition: all 0.3s;
+  }
+  
+  input[type=text]:focus {
+    border-color: var(--blue);
+    box-shadow: 0 0 12px rgba(0, 191, 255, 0.25);
+    background: rgba(255, 255, 255, 0.07);
+  }
+  
+  .btn {
+    width: 100%;
+    padding: 15px;
+    border: none;
+    border-radius: 16px;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    margin-bottom: 8px;
+    transition: all 0.2s ease;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+  }
+  
+  .btn:active { transform: scale(0.97); opacity: 0.9; }
+  .btn-primary { background: linear-gradient(135deg, #0088ff, #00bfff); color: #fff; box-shadow: 0 4px 15px rgba(0, 191, 255, 0.3); }
+  .btn-success { background: linear-gradient(135deg, #00cd77, #00ff87); color: #06060c; font-weight: 800; box-shadow: 0 4px 15px rgba(0, 255, 135, 0.3); }
+  .btn-danger  { background: linear-gradient(135deg, #e6005c, #ff3366); color: #fff; box-shadow: 0 4px 15px rgba(255, 51, 102, 0.35); }
+  .btn-add     { background: rgba(0, 191, 255, 0.08); color: var(--blue); border: 1px dashed rgba(0, 191, 255, 0.3); }
+  
+  .status-bar  { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 12px; margin-bottom: 16px; }
+  .status-item { background: var(--panel); backdrop-filter: blur(10px); border-radius: 14px; padding: 10px 12px; border: 1px solid rgba(255,255,255,0.03); display: flex; align-items: center; gap: 8px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot-green { background: var(--green); box-shadow: 0 0 10px var(--green); }
+  .dot-red   { background: var(--red);   box-shadow: 0 0 10px var(--red); }
+  
+  .waypoint-item { display: flex; align-items: center; margin-bottom: 10px; gap: 10px; }
+  .wp-num { background: rgba(0, 191, 255, 0.15); color: var(--blue); border: 1px solid var(--blue); border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
+  .wp-del { color: var(--red); font-size: 18px; cursor: pointer; padding: 0 8px; }
+
+  /* Speed, turns panel */
+  .nav-instruction { font-size: 20px; font-weight: 800; color: #fff; margin-bottom: 6px; text-align: center; }
+  .nav-dist { color: var(--blue); font-size: 14px; font-weight: 700; text-align: center; margin-bottom: 10px; }
+  .speed-display { font-size: 64px; font-weight: 900; color: var(--green); text-align: center; text-shadow: 0 0 20px rgba(0, 255, 135, 0.4); font-family: monospace; line-height: 1; }
+  .speed-unit { font-size: 12px; color: var(--sub); text-align: center; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 4px; margin-bottom: 16px; }
+  .eta-row { display: flex; justify-content: space-between; font-size: 13px; color: var(--sub); font-weight: 600; background: rgba(255,255,255,0.03); padding: 10px 14px; border-radius: 12px; }
+
+  /* 3 Routes Selection CSS */
+  .route-option {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
+    padding: 16px;
+    margin-bottom: 12px;
+    cursor: pointer;
+    transition: all 0.25s ease;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .route-option:hover {
+    background: rgba(0, 191, 255, 0.06);
+    border-color: rgba(0, 191, 255, 0.4);
+    transform: translateY(-2px);
+  }
+  .route-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .route-label {
+    font-size: 14px;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .route-meta {
+    font-size: 12px;
+    color: var(--sub);
+    font-weight: 500;
+  }
+  .route-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    margin-top: 4px;
+  }
+  .route-stat {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .cam-alert {
+    background: rgba(255, 51, 102, 0.12);
+    border: 1px solid var(--red);
+    border-radius: 14px;
+    padding: 14px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    color: var(--red);
+    display: none;
+    font-weight: 700;
+    text-align: center;
+    box-shadow: 0 0 15px rgba(255, 51, 102, 0.2);
+  }
+  .cam-alert.show { display: block; animation: pulse 1.2s infinite; }
+  
+  @keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.01); }
+    100% { transform: scale(1); }
+  }
+
+  .voice-bubble {
+    background: rgba(0, 191, 255, 0.08);
+    border-left: 4px solid var(--blue);
+    border-radius: 0 16px 16px 0;
+    padding: 12px 16px;
+    font-size: 13.5px;
+    color: var(--text);
+    margin-bottom: 14px;
+    font-style: italic;
+    display: none;
+  }
+  
+  #route-select-panel { display: none; }
+  #journey-panel { display: none; }
+</style>
+<link rel="stylesheet" href="/leaflet.css" />
+<script src="/leaflet.js"></script>
+</head>
+<body>
+<div id="debug-log" style="background:rgba(255,0,0,0.12);color:#ff3366;font-family:monospace;font-size:12px;padding:12px;margin:12px;border:1.5px solid #ff3366;border-radius:12px;display:none;white-space:pre-wrap;word-break:break-all;position:relative;z-index:99999;"></div>
+<script>
+  window.onerror = function(msg, url, line, col, error) {
+    const log = document.getElementById('debug-log');
+    if (log) {
+      log.style.display = 'block';
+      log.textContent += `⚠️ Lỗi JS: ${msg} (Dòng: ${line}, Cột: ${col})
+`;
+    }
+    return false;
+  };
+</script>
+
+<header>
+  <h1>🏍️ TEQUILA NAVIGATOR</h1>
+  <div class="subtitle">Premium Realtime motorcycle companion</div>
+</header>
+
+<!-- Status Bar -->
+<div class="status-bar">
+  <div class="status-item">
+    <span class="dot dot-green" id="wifi-dot"></span>
+    <span id="wifi-status">Đang quét...</span>
+  </div>
+  <div class="status-item">
+    <span class="dot" id="gps-dot" style="background:#888;"></span>
+    <span id="gps-status">📍 GPS: Đang định vị...</span>
+  </div>
+  <div class="status-item">
+    <span id="findmy-dot" style="width:8px;height:8px;border-radius:50%;display:inline-block;background:#555;margin-right:4px;"></span>
+    <span id="findmy-status" style="font-size:11px;color:#aaa;">🍎 Find My</span>
+  </div>
+</div>
+
+
+
+<!-- Map: Always Visible -->
+<div class="map-wrapper">
+  <div id="map"></div>
+</div>
+
+<!-- Voice Reply Bubble -->
+<div class="voice-bubble" id="voice-bubble"></div>
+
+<!-- Settings & Config Panel -->
+<div class="card">
+  <div class="card-title">⚙️ Cấu hình thiết bị & Trợ lý</div>
+  <input type="text" id="esp32-ip" placeholder="Địa chỉ IP của ESP32 (VD: 172.20.10.2)" value="172.20.10.2">
+  <input type="text" id="gemini-key" placeholder="Google Gemini AI API Key" value="AIzaSyDtJSYHSN_cviBBHfgpKItuDaOsg-i7fq0">
+</div>
+
+<!-- Setup Panel -->
+<div class="card" id="setup-panel">
+  <div class="card-title">🎯 Tìm kiếm lộ trình</div>
+  <input type="text" id="destination" placeholder="Ngài muốn đi đâu hôm nay?">
+  
+  <div class="card-title" style="margin-top:14px; font-size:12px;">📍 Điểm dừng dọc đường</div>
+  <div id="waypoint-list"></div>
+  <button class="btn btn-add" onclick="addWaypoint()">+ Thêm điểm dừng</button>
+  
+  <div style="margin-top:18px;">
+    <button class="btn btn-success" onclick="getAlternativeRoutes()">🚀 TÌM ĐƯỜNG & SO SÁNH</button>
+    <button class="btn btn-primary" onclick="optimizeRoute()">✨ AI TỐI ƯU CÁC ĐIỂM DỪNG</button>
+  </div>
+</div>
+
+<!-- Apple Find My Setup Panel - dung <details> thuan HTML, khong can JS toggle -->
+<div class="card" style="border:2px solid #4a90d9; padding:14px;">
+  <div style="font-size:14px;font-weight:700;color:#4a90d9;margin-bottom:8px;">
+    &#127822; Ket Noi Apple Find My
+  </div>
+  <p style="color:#aaa;font-size:12px;margin-bottom:12px;">
+    Dang nhap Apple ID 1 lan de server tu doc GPS tu app Tim.
+    Khong can mo Safari hay app nao nua.
+  </p>
+  <a href="/setup-findmy"
+     style="display:block;width:100%;padding:12px;background:#4a90d9;color:#fff;
+            text-align:center;border-radius:10px;font-size:15px;font-weight:700;
+            text-decoration:none;">
+    &#127822; Mo trang Setup Apple Find My
+  </a>
+  <div id="findmy-status-msg" style="display:none;"></div>
+</div>
+
+<!-- 3 Alternatives Route Selection Panel -->
+<div class="card" id="route-select-panel">
+  <div class="card-title" style="color: var(--orange)">🗺️ Lựa chọn tuyến đường tối ưu</div>
+  <div id="routes-container">
+    <!-- Tuyến 1, 2, 3 load động -->
+  </div>
+  <button class="btn btn-danger" onclick="cancelRouteSelection()" style="margin-top: 10px;">✕ HUỶ BỎ</button>
+</div>
+
+<!-- Active Journey Panel -->
+<div class="card" id="journey-panel">
+  <div class="cam-alert" id="cam-alert">⚠️ <span id="cam-alert-text"></span></div>
+  
+  <div class="nav-instruction" id="nav-instruction">Đang điều hướng...</div>
+  <div class="nav-dist" id="nav-dist"></div>
+  
+  <div class="speed-display" id="speed-display">0</div>
+  <div class="speed-unit">km/h</div>
+  
+  <div class="eta-row">
+    <span id="eta-text">ETA: -- phút</span>
+    <span id="dist-remain">-- km còn lại</span>
+  </div>
+  
+  <button class="btn btn-danger" onclick="stopNavigation()" style="margin-top: 20px;">⏹ DỪNG HÀNH TRÌNH</button>
+</div>
+
+<script>
+let waypoints = [];
+let map = null;
+let carMarker = null;
+let activePolyline = null;
+let previewPolylines = [];
+let cameraMarkers = [];
+let lastVoiceReply = '';
+
+// ─── Apple Find My Setup Functions ───
+function toggleFindMyPanel() {
+  const p = document.getElementById('findmy-panel');
+  p.style.display = (p.style.display === 'none' || p.style.display === '') ? 'block' : 'none';
+}
+
+async function setupFindMy() {
+  const appleId  = document.getElementById('apple-id-input').value.trim();
+  const password = document.getElementById('apple-pw-input').value;
+  if (!appleId || !password) { alert('Nhập Apple ID và mật khẩu!'); return; }
+  const msg = document.getElementById('findmy-status-msg');
+  msg.style.display = 'block'; msg.style.color = '#f0a500';
+  msg.textContent = '⏳ Đang kết nối Apple ID... (chờ 20-40 giây)';
+  try {
+    const r = await fetch('/api/setup-findmy', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ apple_id: appleId, password: password })
+    });
+    const d = await r.json();
+    if (d.status === '2fa_required') {
+      msg.style.color = '#f0a500';
+      msg.textContent = '📱 Apple gửi mã 2FA về iPhone của bạn. Nhập vào ô bên dưới.';
+      document.getElementById('findmy-form-area').style.display = 'none';
+      document.getElementById('findmy-2fa-area').style.display = 'block';
+      document.getElementById('findmy-2fa-input').focus();
+    } else if (d.status === 'ok') {
+      msg.style.color = '#00ff87';
+      msg.textContent = '✅ Đăng nhập thành công! GPS tự động từ Find My.';
+      document.getElementById('findmy-dot').style.background = '#00ff87';
+      document.getElementById('findmy-status').textContent = '🍎 Find My ✅';
+      const mainBtn = document.getElementById('findmy-main-btn');
+      if (mainBtn) {
+        mainBtn.textContent = '🍎 Find My ✅ Đang hoạt động';
+        mainBtn.style.borderColor = '#00ff87';
+        mainBtn.style.color = '#00ff87';
+        mainBtn.style.background = 'linear-gradient(135deg,#0a2a1a,#0a3a2a)';
+      }
+    } else {
+      msg.style.color = '#ff4444';
+      msg.textContent = '❌ ' + (d.message || d.error || JSON.stringify(d));
+    }
+  } catch(e) {
+    msg.style.color='#ff4444'; msg.textContent='❌ Lỗi: '+e.message;
+  }
+}
+
+async function submit2FA() {
+  const code = document.getElementById('findmy-2fa-input').value.trim();
+  if (code.length < 6) { alert('Mã 2FA phải đủ 6 chữ số!'); return; }
+  const msg = document.getElementById('findmy-status-msg');
+  msg.style.color = '#f0a500'; msg.textContent = '⏳ Đang xác nhận mã 2FA...';
+  try {
+    const r = await fetch('/api/findmy-2fa', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ code: code })
+    });
+    const d = await r.json();
+    if (d.status === 'ok') {
+      msg.style.color = '#00ff87';
+      msg.textContent = '✅ 2FA thành công! Find My đang chạy.';
+      document.getElementById('findmy-dot').style.background = '#00ff87';
+      document.getElementById('findmy-status').textContent = '🍎 Find My ✅';
+      const mainBtn2 = document.getElementById('findmy-main-btn');
+      if (mainBtn2) {
+        mainBtn2.textContent = '🍎 Find My ✅ Đang hoạt động';
+        mainBtn2.style.borderColor = '#00ff87';
+        mainBtn2.style.color = '#00ff87';
+        mainBtn2.style.background = 'linear-gradient(135deg,#0a2a1a,#0a3a2a)';
+      }
+      document.getElementById('findmy-2fa-area').style.display = 'none';
+      setTimeout(()=>{ document.getElementById('findmy-panel').style.display='none'; }, 3000);
+    } else {
+      msg.style.color='#ff4444';
+      msg.textContent='❌ Mã sai hoặc hết hạn: '+(d.error||'Thử lại');
+    }
+  } catch(e) {
+    msg.style.color='#ff4444'; msg.textContent='❌ Lỗi: '+e.message;
+  }
+}
+
+// Khởi tạo bản đồ ngay từ đầu
+document.addEventListener('DOMContentLoaded', () => {
+  initMap();
+  
+  // Khôi phục cài đặt lưu trữ
+  const savedIP = localStorage.getItem('esp32_ip');
+  if (savedIP) {
+    document.getElementById('esp32-ip').value = savedIP;
+  }
+  const savedKey = localStorage.getItem('gemini_key');
+  if (savedKey) {
+    document.getElementById('gemini-key').value = savedKey;
+    saveGeminiKey(savedKey);
+  }
+  
+  // Polling trạng thái liên tục mỗi 1.5 giây
+  setInterval(fetchStatus, 1500);
+});
+
+// Gán sự kiện lưu config
+document.getElementById('esp32-ip').addEventListener('change', (e) => {
+  localStorage.setItem('esp32_ip', e.target.value.trim());
+});
+document.getElementById('gemini-key').addEventListener('change', (e) => {
+  const key = e.target.value.trim();
+  localStorage.setItem('gemini_key', key);
+  saveGeminiKey(key);
+});
+
+async function saveGeminiKey(key) {
+  try {
+    await fetch('/api/set-gemini-key', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ gemini_api_key: key })
+    });
+  } catch(e){}
+}
+
+function initMap() {
+  if (map) return;
+  // Mặc định trung tâm Sài Gòn
+  map = L.map('map', { zoomControl: false }).setView([10.7769, 106.7009], 14);
+  
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '© OpenStreetMap'
+  }).addTo(map);
+
+  const motoIcon = L.divIcon({
+    html: '<div style="font-size: 26px; filter: drop-shadow(0 0 8px #00ff87);">🏍️</div>',
+    iconSize: [26, 26],
+    iconAnchor: [13, 13]
+  });
+
+  carMarker = L.marker([10.7769, 106.7009], { icon: motoIcon }).addTo(map);
+}
+
+
+async function fetchStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    updateUI(d);
+  } catch(e){}
+}
+
+// ── GPS Safari iPhone → Cloud server (fix: auto-zoom, instant fix, dot indicator) ──
+let _gpsFirstFix = false;
+let _lastGpsSend = 0;
+
+function _sendGpsToServer(lat, lon, speed, heading, accuracy) {
+  const now = Date.now();
+  if (now - _lastGpsSend < 1800) return;
+  _lastGpsSend = now;
+  fetch('/api/update-gps', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ lat, lon, speed, heading, accuracy })
+  }).then(r => {
+    if (r.ok) {
+      const dot = document.getElementById('gps-dot');
+      if (dot) dot.style.background = '#00ff87';
+      document.getElementById('gps-status').textContent =
+        `📍 GPS: ${lat.toFixed(5)}, ${lon.toFixed(5)} (±${Math.round(accuracy||0)}m)`;
+    }
+  }).catch(() => {
+    const dot = document.getElementById('gps-dot');
+    if (dot) dot.style.background = '#ff4444';
+  });
+  if (map && carMarker) {
+    carMarker.setLatLng([lat, lon]);
+    if (!_gpsFirstFix) {
+      map.setView([lat, lon], 16);
+      _gpsFirstFix = true;
+    }
+  }
+}
+
+if (navigator.geolocation) {
+  const gpsOpts = { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 };
+  navigator.geolocation.watchPosition(pos => {
+    const { latitude: lat, longitude: lon, speed, heading, accuracy } = pos.coords;
+    _sendGpsToServer(lat, lon, speed ? speed * 3.6 : 0, heading || 0, accuracy || 0);
+  }, err => {
+    let msg = '❌ GPS: ';
+    if (err.code === 1) msg += 'Bị từ chối quyền vị trí — vào Settings > Safari > Vị trí > Cho phép';
+    else if (err.code === 2) msg += 'Không lấy được tín hiệu GPS';
+    else msg += 'Hết thời gian chờ GPS';
+    document.getElementById('gps-status').textContent = msg;
+  }, gpsOpts);
+  // Lấy vị trí ngay lập tức không chờ watchPosition
+  navigator.geolocation.getCurrentPosition(pos => {
+    const { latitude: lat, longitude: lon, speed, heading, accuracy } = pos.coords;
+    _sendGpsToServer(lat, lon, speed ? speed * 3.6 : 0, heading || 0, accuracy || 0);
+  }, () => {}, gpsOpts);
+} else {
+  document.getElementById('gps-status').textContent = '❌ Trình duyệt không hỗ trợ GPS';
+}
+
+function clearPreviewPolylines() {
+  previewPolylines.forEach(pl => map.removeLayer(pl));
+  previewPolylines = [];
+}
+
+function clearCameraMarkers() {
+  cameraMarkers.forEach(m => map.removeLayer(m));
+  cameraMarkers = [];
+}
+
+function updateUI(d) {
+  // 1. Đồng bộ kết nối wifi & định vị
+  if (d.wifi_connected) {
+    document.getElementById('wifi-dot').className = 'dot dot-green';
+    document.getElementById('wifi-status').textContent = `ESP32 connected`;
+  } else {
+    document.getElementById('wifi-dot').className = 'dot dot-red';
+    document.getElementById('wifi-status').textContent = `ESP32 offline`;
+  }
+  
+  if (d.gps_lat) {
+    const lat = typeof d.gps_lat === 'string' ? parseFloat(d.gps_lat) : d.gps_lat;
+    const lon = typeof d.gps_lon === 'string' ? parseFloat(d.gps_lon) : d.gps_lon;
+    document.getElementById('gps-status').textContent = `📍 GPS: ${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+    if (map && carMarker) {
+      const pos = [lat, lon];
+      carMarker.setLatLng(pos);
+      // Zoom pan khi nhận GPS lần đầu hoặc đang dẫn đường active
+      if (d.is_navigating || !_gpsFirstFix) {
+        map.setView(pos, 15);
+        _gpsFirstFix = true;
+      }
+    }
+  }
+  
+  // 2. Đồng bộ hộp thoại giọng nói
+  const bubble = document.getElementById('voice-bubble');
+  if (d.voice_reply) {
+    bubble.style.display = 'block';
+    bubble.textContent = `Tequila: "${d.voice_reply}"`;
+    
+    if (d.voice_reply !== lastVoiceReply) {
+      lastVoiceReply = d.voice_reply;
+      let utterance = new SpeechSynthesisUtterance(d.voice_reply);
+      utterance.lang = 'vi-VN';
+      window.speechSynthesis.speak(utterance);
+    }
+  } else {
+    bubble.style.display = 'none';
+  }
+
+  // 3. Trạng thái 1: Đang hiển thị so sánh 3 tuyến đường
+  if (d.selecting_route && d.pending_routes && d.pending_routes.length > 0) {
+    document.getElementById('setup-panel').style.display = 'none';
+    document.getElementById('route-select-panel').style.display = 'block';
+    document.getElementById('journey-panel').style.display = 'none';
+    
+    // Vẽ 3 tuyến đường lên bản đồ với 3 màu khác biệt
+    clearPreviewPolylines();
+    const container = document.getElementById('routes-container');
+    container.innerHTML = '';
+    
+    const colors = ["#00bfff", "#00ff87", "#ff9900"]; // Cyan, Green, Orange
+    const bounds = L.latLngBounds();
+    
+    d.pending_routes.forEach((rt, i) => {
+      const polyCoords = rt.polyline.map(p => [p[0], p[1]]);
+      const color = colors[i] || '#ffffff';
+      
+      const pl = L.polyline(polyCoords, {
+        color: color,
+        weight: i === 0 ? 7 : 5,
+        opacity: 0.8,
+        lineJoin: 'round'
+      }).addTo(map);
+      
+      previewPolylines.push(pl);
+      polyCoords.forEach(c => bounds.extend(c));
+      
+      // Tạo HTML Card cho tuyến đường này
+      container.innerHTML += `
+        <div class="route-option" onclick="selectRoute(${rt.index})">
+          <div class="route-header">
+            <span class="route-label" style="color: ${color}">
+              <span style="font-size: 16px">${i === 0 ? '🏆' : '📍'}</span>
+              ${rt.label}
+            </span>
+            <span class="route-meta">${rt.summary}</span>
+          </div>
+          <div class="route-stats">
+            <div class="route-stat">📏 ${rt.total_distance_km} km</div>
+            <div class="route-stat">⏱️ ${rt.total_duration_min} phút</div>
+          </div>
+          <div class="route-stats" style="font-size: 11px; color: var(--sub); margin-top: 4px;">
+            <div class="route-stat">⚡ Tốc độ tối đa: ${rt.max_speed} km/h</div>
+            <div class="route-stat">📷 Camera phạt nguội: ${rt.camera_count}</div>
+          </div>
+        </div>
+      `;
+    });
+    
+    if (previewPolylines.length > 0) {
+      map.fitBounds(bounds, { padding: [40, 40] });
+    }
+    
+    return;
+  }
+
+  // 4. Trạng thái 2: Đang điều hướng chủ động
+  if (d.is_navigating) {
+    document.getElementById('setup-panel').style.display = 'none';
+    document.getElementById('route-select-panel').style.display = 'none';
+    document.getElementById('journey-panel').style.display = 'block';
+    
+    clearPreviewPolylines();
+    
+    // Vẽ đường đi đậm màu xanh dương
+    if (map && d.route_polyline && d.route_polyline.length > 0) {
+      const coords = d.route_polyline.map(p => [p[0], p[1]]);
+      if (activePolyline) {
+        activePolyline.setLatLngs(coords);
+      } else {
+        activePolyline = L.polyline(coords, {
+          color: '#00bfff',
+          weight: 7,
+          opacity: 0.9,
+          lineJoin: 'round'
+        }).addTo(map);
+      }
+    }
+    
+    // Cập nhật text & camera phạt nguội
+    document.getElementById('nav-instruction').textContent = d.current_instruction || 'Đi thẳng';
+    if (d.dist_to_turn) {
+      document.getElementById('nav-dist').textContent = `Cách ${d.dist_to_turn} mét`;
+    } else {
+      document.getElementById('nav-dist').textContent = '';
+    }
+    
+    document.getElementById('speed-display').textContent = Math.round(d.speed_kmh || 0);
+    document.getElementById('eta-text').textContent = `ETA: ${d.eta_min || '--'} phút`;
+    document.getElementById('dist-remain').textContent = `${d.dist_remain_km || '--'} km còn lại`;
+    
+    if (d.camera_warning) {
+      document.getElementById('cam-alert').className = 'cam-alert show';
+      document.getElementById('cam-alert-text').textContent = d.camera_warning;
+    } else {
+      document.getElementById('cam-alert').className = 'cam-alert';
+    }
+    
+    // Vẽ các marker camera phạt nguội gần đó lên bản đồ
+    clearCameraMarkers();
+    if (d.cameras_nearby) {
+      d.cameras_nearby.forEach(cam => {
+        const camIcon = L.divIcon({
+          html: '<div style="font-size: 16px; background: rgba(255, 51, 102, 0.2); border: 1px solid #ff3366; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;">📷</div>',
+          iconSize: [24, 24],
+          iconAnchor: [12, 12]
+        });
+        const m = L.marker([cam.lat, cam.lon], {icon: camIcon}).addTo(map)
+                   .bindPopup(`<b>Camera phạt nguội</b><br>Giới hạn: ${cam.speed_limit} km/h`);
+        cameraMarkers.push(m);
+      });
+    }
+  } else {
+    // Trạng thái 3: Sẵn sàng tìm kiếm
+    document.getElementById('setup-panel').style.display = 'block';
+    document.getElementById('route-select-panel').style.display = 'none';
+    document.getElementById('journey-panel').style.display = 'none';
+    
+    if (activePolyline) {
+      map.removeLayer(activePolyline);
+      activePolyline = null;
+    }
+    clearPreviewPolylines();
+    clearCameraMarkers();
+  }
+}
+
+// Thêm điểm dừng
+function addWaypoint() {
+  waypoints.push('');
+  renderWaypoints();
+}
+
+function renderWaypoints() {
+  const list = document.getElementById('waypoint-list');
+  list.innerHTML = '';
+  waypoints.forEach((wp, i) => {
+    list.innerHTML += `
+      <div class="waypoint-item">
+        <div class="wp-num">${i + 1}</div>
+        <input type="text" id="wp-${i}" value="${wp}" placeholder="Nhập điểm trung gian ${i+1}..." style="margin:0; flex:1;">
+        <span class="wp-del" onclick="removeWaypoint(${i})">✕</span>
+      </div>`;
+  });
+}
+
+function removeWaypoint(i) {
+  waypoints.splice(i, 1);
+  renderWaypoints();
+}
+
+// Bấm "Tìm đường & So sánh"
+async function getAlternativeRoutes() {
+  const dest = document.getElementById('destination').value.trim();
+  const espIP = document.getElementById('esp32-ip').value.trim();
+  
+  if (!dest) { alert('Vui lòng nhập điểm đến!'); return; }
+  if (!espIP) { alert('Vui lòng cấu hình IP ESP32!'); return; }
+  
+  const wps = [];
+  waypoints.forEach((_, i) => {
+    const val = document.getElementById(`wp-${i}`)?.value.trim();
+    if (val) wps.push(val);
+  });
+  
+  // Gửi yêu cầu tính 3 tuyến đường
+  await fetch('/api/get-routes', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ destination: dest, waypoints: wps, esp32_ip: espIP })
+  });
+  fetchStatus();
+}
+
+// Bấm Chọn 1 trong 3 tuyến đường
+async function selectRoute(idx) {
+  await fetch('/api/select-route', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ route_index: idx })
+  });
+  fetchStatus();
+}
+
+// Huỷ bỏ lựa chọn
+async function cancelRouteSelection() {
+  await fetch('/api/stop', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({})
+  });
+  fetchStatus();
+}
+
+// AI tối ưu hoá đường đi các điểm dừng
+async function optimizeRoute() {
+  const dest = document.getElementById('destination').value.trim();
+  const wps = [];
+  waypoints.forEach((_, i) => {
+    const val = document.getElementById(`wp-${i}`)?.value.trim();
+    if (val) wps.push(val);
+  });
+  
+  if (!dest && !wps.length) { alert('Nhập ít nhất 1 điểm!'); return; }
+  
+  const r = await fetch('/api/optimize', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ destination: dest, waypoints: wps })
+  });
+  const d = await r.json();
+  if (d.optimized_order) {
+    alert('Thứ tự tối ưu AI:
+' + d.optimized_order.join(' → '));
+  }
+}
+
+// Dừng hành trình
+async function stopNavigation() {
+  if (!confirm('Dừng dẫn đường hành trình hiện tại?')) return;
+  await fetch('/api/stop', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({})
+  });
+  fetchStatus();
+}
+</script>
+</body>
+</html>
