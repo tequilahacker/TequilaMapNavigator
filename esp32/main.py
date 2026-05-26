@@ -46,11 +46,27 @@ def init_display():
     return drv
 
 def init_touch():
-    """Khởi tạo capacitive touch controller FT6236."""
+    """Khởi tạo XPT2046 resistive touch (ESP32-2432S028 / CYD board).
+    
+    CYD dùng XPT2046 qua SPI2 riêng (không phải FT6236 I2C).
+    GPIO: CLK=25, MOSI=32, MISO=39, CS=33, IRQ=36
+    """
     try:
-        from ft6x36 import FT6x36
-        tp = FT6x36(i2c=machine.I2C(0, sda=config.I2C_SDA, scl=config.I2C_SCL, freq=400000))
+        from xpt2046 import XPT2046
+        spi2 = machine.SPI(2,
+            baudrate=1000000,
+            sck=machine.Pin(config.TOUCH_CLK),
+            mosi=machine.Pin(config.TOUCH_MOSI),
+            miso=machine.Pin(config.TOUCH_MISO)
+        )
+        tp = XPT2046(spi=spi2,
+                     cs=machine.Pin(config.TOUCH_CS, machine.Pin.OUT),
+                     int_pin=machine.Pin(config.TOUCH_IRQ, machine.Pin.IN))
+        print("[Touch] XPT2046 resistive touch khởi tạo thành công.")
         return tp
+    except ImportError:
+        print("[Touch] Thư viện xpt2046 chưa có — touch sẽ không hoạt động.")
+        return None
     except Exception as e:
         print("[Touch] Khởi tạo lỗi:", e)
         return None

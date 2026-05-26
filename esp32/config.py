@@ -1,86 +1,92 @@
 # esp32/config.py
-# Cấu hình pin và thông số cho ESP32-S3 + 2.8" IPS TFT Compact Board
+# Cấu hình pin cho ESP32-2432S028 (Cheap Yellow Display - CYD)
+# Board: ESP32-WROOM-32, ILI9341 2.8" 240×320, XPT2046 resistive touch
 
-# ─── WiFi (thay BLE) ───
-# ⚠️ Điền đúng tên hotspot và mật khẩu iPhone của bạn vào đây
-WIFI_SSID     = "iPhone của Tequila"   # Tên Personal Hotspot trên iPhone
-WIFI_PASSWORD = "matkhaucuaban"        # Mật khẩu hotspot (Settings → Personal Hotspot)
-HTTP_PORT     = 80                     # Port HTTP server trên ESP32
-# IP của ESP32 sẽ in ra Serial khi boot — thường là 172.20.10.2
-# Điền IP đó vào Apple Shortcuts (bước 6 trong shortcuts_guide.md)
+# ─── WiFi ───
+# ⚠️ Điền tên hotspot iPhone và mật khẩu vào đây
+# Tìm ở: Cài đặt iPhone → Personal Hotspot
+WIFI_SSID     = "iPhone của Tequila"   # Sửa thành tên hotspot thật
+WIFI_PASSWORD = "matkhaucuaban"        # Sửa thành mật khẩu thật
+HTTP_PORT     = 80
 
-# ─── CẤU HÌNH CLOUD SERVER (ĐÁM MÂY MIỄN PHÍ) ───
-USE_CLOUD_SERVER  = True                 # True = Cloud, False = Local
+# ─── CLOUD SERVER ───
+USE_CLOUD_SERVER  = True
 CLOUD_SERVER_HOST = "tequilamap.onrender.com"
 CLOUD_SERVER_PORT = 443
 CLOUD_SERVER_SSL  = True
 CLOUD_POLL_MS     = 1500
 
 # ─── OPENHAYSTACK / APPLE FIND MY ───
-# ESP32 phat BLE → iPhone pickup → Apple server → Server doc GPS tu dong
-# SETUP 1 LAN: vao https://tequilamap.onrender.com/api/gen-findmy-key
-# Sau do copy public_key_bytes tra ve vao FINDMY_PUBLIC_KEY duoi day
 FINDMY_BLE_ENABLED = True
-FINDMY_PUBLIC_KEY  = bytes([  # ← KEY THẬT - đã gen ngày 25/05/2026
+FINDMY_PUBLIC_KEY  = bytes([
     74, 65, 168, 22, 50, 46, 153, 59,
     47, 163, 85, 131, 229, 167, 229, 96,
     77, 12, 90, 17, 246, 165, 195, 50,
     215, 173, 253, 53
 ])
 
+# ─── DISPLAY: ILI9341 SPI ───
+# ESP32-2432S028 (CYD) pinout
+DISPLAY_WIDTH    = 240
+DISPLAY_HEIGHT   = 320
+DISPLAY_ROTATION = 0      # Portrait dọc
+MAP_AREA_HEIGHT  = 252    # 320 - 28 (statusbar) - 40 (HUD)
+HUD_HEIGHT       = 40
+STATUS_BAR_H     = 28
 
-# ─── DISPLAY (SPI) - ILI9341 / ST7789 ───
-# ⚠️ Chỉnh lại các pin này theo board thực tế của bạn
-DISPLAY_WIDTH    = 240   # Portrait: 240 rộng
-DISPLAY_HEIGHT   = 320   # Portrait: 320 cao
-DISPLAY_ROTATION = 0    # 0 = Portrait (dọc) ← thiết bị xe máy cầm dọc
-MAP_AREA_HEIGHT  = 280   # Vùng bản đồ (px): tổng 320 - HUD 40px
-HUD_HEIGHT       = 40    # Thanh HUD dưới cùng (tốc độ + chỉ dẫn)
+TFT_MOSI = 13   # SPI MOSI
+TFT_MISO = 12   # SPI MISO (ILI9341 không cần nhưng SPI bus cần)
+TFT_CLK  = 14   # SPI CLK
+TFT_CS   = 15   # Chip Select
+TFT_DC   = 2    # Data/Command
+TFT_RST  = 12   # Reset — CYD dùng chung với MISO, có thể là -1
+TFT_BL   = 21   # Backlight (PWM)
 
-TFT_MOSI = 13  # GPIO13 - SPI MOSI
-TFT_CLK  = 14  # GPIO14 - SPI CLK
-TFT_CS   = 15  # GPIO15 - Chip Select
-TFT_DC   = 2   # GPIO2  - Data/Command
-TFT_RST  = 4   # GPIO4  - Reset
-TFT_BL   = 27  # GPIO27 - Backlight PWM
+# ─── TOUCH: XPT2046 Resistive (SPI riêng) ───
+# ⚠️ CYD dùng XPT2046, KHÔNG phải FT6236 capacitive!
+TOUCH_CLK  = 25   # SPI CLK riêng cho touch
+TOUCH_MOSI = 32   # SPI MOSI
+TOUCH_MISO = 39   # SPI MISO (GPIO39 = input only)
+TOUCH_CS   = 33   # Chip Select
+TOUCH_IRQ  = 36   # Interrupt (GPIO36 = input only)
 
-# ─── TOUCH (I2C) - FT6236 Capacitive Touch ───
-I2C_SDA  = 21  # GPIO21
-I2C_SCL  = 22  # GPIO22
-TOUCH_INT = 39  # GPIO39 - Touch interrupt (optional)
+# ─── I2C (cho các module phụ nếu cần) ───
+I2C_SDA  = 21
+I2C_SCL  = 22
 
-# ─── I2S MICROPHONE - INMP441 ───
-MIC_SCK  = 36  # GPIO36 - Serial Clock
-MIC_WS   = 37  # GPIO37 - Word Select (L/R)
-MIC_SD   = 35  # GPIO35 - Serial Data
+# ─── I2S MICROPHONE - INMP441 (nối ngoài) ───
+MIC_SCK  = 26   # GPIO26 - SCK
+MIC_WS   = 27   # GPIO27 - WS (L/R)
+MIC_SD   = 35   # GPIO35 - SD (data, input only)
 
-# ─── I2S SPEAKER - MAX98357A ───
-SPK_SCK  = 17  # GPIO17 - BCLK
-SPK_WS   = 16  # GPIO16 - LRC (Word Select)
-SPK_SD   = 18  # GPIO18 - DIN (Data In)
-SPK_GAIN = 19  # GPIO19 - Gain (để trống = 9dB, kéo LOW = 12dB, HIGH = 6dB)
+# ─── I2S SPEAKER - MAX98357A (nối ngoài) ───
+SPK_SCK  = 17   # GPIO17 - BCLK
+SPK_WS   = 16   # GPIO16 - LRC
+SPK_SD   = 18   # GPIO18 - DIN
+SPK_GAIN = 19   # GPIO19 - Gain
 
 # ─── POWER ───
-BATTERY_ADC_PIN = 34  # GPIO34 - ADC đo điện áp pin (qua voltage divider 1:2)
-ACC_PIN         = 32  # GPIO32 - ADC đọc điện áp ACC từ xe (qua voltage divider 1:3)
-# ⚠️ Lắp điện trở 10kΩ + 20kΩ từ dây ACC về GND cho ACC_PIN
+BATTERY_ADC_PIN = 34   # ADC đo pin (input only, qua voltage divider)
+ACC_PIN         = 34   # Dùng chung ADC34 cho ACC nếu không có pin riêng
+                       # ⚠️ Nếu không có dây ACC từ xe, để mặc định True trong check_power_source()
 
 # ─── BUTTONS ───
-WAKE_BUTTON_PIN = 0   # GPIO0 - Nút BOOT/Wake (thường có sẵn trên board)
-# GPIO0 LOW = button pressed (nối đất khi nhấn)
+WAKE_BUTTON_PIN = 0    # GPIO0 = nút BOOT có sẵn trên board CYD
 
-# ─── LED STATUS ───
-STATUS_LED_PIN  = 38  # GPIO38 - LED xanh status (optional)
+# ─── LED RGB (CYD có LED RGB tích hợp) ───
+LED_RED   = 4    # GPIO4
+LED_GREEN = 16   # GPIO16 (chia sẻ với SPK_WS nếu dùng loa)
+LED_BLUE  = 17   # GPIO17
 
 # ─── AUDIO ───
-SAMPLE_RATE     = 16000   # Hz - 16kHz mono
-MIC_GAIN        = 32      # Gain amplifier factor
-VOICE_RECORD_MS = 5000    # 5 giây ghi âm tối đa
+SAMPLE_RATE     = 16000
+MIC_GAIN        = 32
+VOICE_RECORD_MS = 5000
 
 # ─── MAP DISPLAY ───
-MAP_ROUTE_COLOR    = (0, 85, 255)     # Xanh đậm - route Google Maps
-MAP_CAM_COLOR      = (255, 50, 50)    # Đỏ - camera
-MAP_POS_COLOR      = (255, 0, 0)      # Đỏ - vị trí hiện tại (marker)
-MAP_BG_COLOR       = (15, 15, 25)     # Xanh đen - nền fallback
-CAMERA_ALERT_DIST  = 50               # Mét - cảnh báo khi cách camera <= 50m
-MAP_UPDATE_SEC     = 3                # Giây - tần suất fetch bản đồ từ server
+MAP_ROUTE_COLOR    = (0, 85, 255)
+MAP_CAM_COLOR      = (255, 50, 50)
+MAP_POS_COLOR      = (255, 0, 0)
+MAP_BG_COLOR       = (15, 15, 25)
+CAMERA_ALERT_DIST  = 50          # Cảnh báo camera khi cách <= 50m
+MAP_UPDATE_SEC     = 3           # Fetch bản đồ mỗi 3 giây
