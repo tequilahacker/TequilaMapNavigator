@@ -523,11 +523,10 @@ function initMap() {
   // Mặc định trung tâm Sài Gòn
   map = L.map('map', { zoomControl: false }).setView([10.7769, 106.7009], 14);
   
-  // OpenStreetMap — bản đồ chuẩn, luôn hoạt động, đủ đường VN
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    subdomains: 'abc',
-    attribution: '© OpenStreetMap contributors'
+  // HERE Maps qua tile proxy của server — không bị CORS, chi tiết địa điểm nhỏ
+  L.tileLayer(window.location.origin + '/tile/{z}/{x}/{y}.png', {
+    maxZoom: 20,
+    attribution: '© HERE Maps'
   }).addTo(map);
 
   const motoIcon = L.divIcon({
@@ -1802,6 +1801,38 @@ class NavigatorWebServer:
                     server_self.device_state["voice"] = None
                     server_self.device_state["stop"] = False
                     self.send_json(state)
+                elif self.path.startswith('/tile/'):
+                    # ── HERE Maps Tile Proxy — tránh CORS cho browser ──
+                    # Browser gọi /tile/{z}/{x}/{y}.png → server lấy HERE tile → trả về
+                    import re as _re
+                    _tm = _re.match(r'/tile/(\d+)/(\d+)/(\d+)\.png', self.path)
+                    if _tm:
+                        _tz, _tx, _ty = _tm.group(1), _tm.group(2), _tm.group(3)
+                        _here_url = (
+                            f"https://maps.hereapi.com/v3/base/mc/{_tz}/{_tx}/{_ty}/png"
+                            f"?apikey={HERE_API_KEY}&style=explore.day&lang=vi"
+                        )
+                        try:
+                            import requests as _rq
+                            _tr = _rq.get(_here_url, timeout=5,
+                                          headers={"User-Agent": "TequilaMap/2.0"})
+                            if _tr.status_code == 200:
+                                self.send_response(200)
+                                self.send_header('Content-Type', 'image/png')
+                                self.send_header('Cache-Control', 'public, max-age=86400')
+                                self.send_header('Access-Control-Allow-Origin', '*')
+                                self.end_headers()
+                                self.wfile.write(_tr.content)
+                            else:
+                                self.send_response(502)
+                                self.end_headers()
+                        except Exception as _te:
+                            print(f"[TileProxy] Lỗi: {_te}")
+                            self.send_response(503)
+                            self.end_headers()
+                    else:
+                        self.send_response(400)
+                        self.end_headers()
                 elif self.path.startswith('/api/map-image'):
                     # ── TRẢ ẢNH JPEG BẢN ĐỒ GOOGLE MAPS CHO ESP32 ──
                     # Center = vị trí user hiện tại, có route line màu xanh
