@@ -798,35 +798,37 @@ def main():
                     print_hud()
                 continue
                 
-            # Trạng thái bình thường: Nhập lệnh thoại
-            print("\033[93m🎤 [NHẤN 1] Để nói trực tiếp (Mic MacBook) | [NHẤN 2] Nhập chữ bằng phím:\033[0m")
-            choice = input("> ").strip()
-            
-            if choice == "2":
-                print("⌨️ Nhập câu lệnh thoại của bạn:")
-                cmd = input("> ")
+            # ── Không có routes: raw có chữ = gửi lệnh ngay, rỗng = hỏi 1/2 ──
+            if raw.strip():
+                cmd = raw.strip()
                 is_typing = False
-                if cmd.strip():
-                    if cmd.lower().strip() in ["exit", "thoát", "stop"]:
-                        is_running = False
-                        break
-                    simulate_mic_input(cmd)
-                    time.sleep(2.0)
-                    print_hud()
-                else:
-                    print_hud()
-            elif choice == "1" or choice == "":
-                # Ghi âm thực tế
-                success = record_and_send_voice()
-                is_typing = False
-                if success:
-                    time.sleep(3.0)  # Đợi server dịch
+                if cmd.lower() in ["exit", "thoát", "quit", "stop"]:
+                    is_running = False
+                    break
+                print(f"\n🗣️  Đang gửi lệnh: \'{cmd}\'")
+                simulate_mic_input(cmd)
+                time.sleep(2.5)
                 print_hud()
             else:
-                print("⚠️ Lựa chọn không hợp lệ. Nhập 1 hoặc 2!")
-                is_typing = False
-                time.sleep(1.0)
-                print_hud()
+                print("\033[93m🎤 [1] Nói vào Mic MacBook   ⌨️  [2] Gõ chữ bàn phím\033[0m", end="  ")
+                choice = input().strip()
+                if choice == "1" or choice == "":
+                    success = record_and_send_voice()
+                    is_typing = False
+                    if success:
+                        time.sleep(3.0)
+                    print_hud()
+                else:
+                    print("⌨️  Lệnh (vd: đến cafe Bamos Lê Văn Việt):", end="  ")
+                    cmd = input().strip()
+                    is_typing = False
+                    if cmd:
+                        if cmd.lower() in ["exit", "thoát", "quit", "stop"]:
+                            is_running = False
+                            break
+                        simulate_mic_input(cmd)
+                        time.sleep(2.5)
+                    print_hud()
                 
         except (KeyboardInterrupt, SystemExit):
             is_running = False
