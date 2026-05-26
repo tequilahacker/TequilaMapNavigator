@@ -5,8 +5,8 @@
 # ─── WiFi ───
 # ⚠️ Điền tên hotspot iPhone và mật khẩu vào đây
 # Tìm ở: Cài đặt iPhone → Personal Hotspot
-WIFI_SSID     = "iPhone của Tequila"   # Sửa thành tên hotspot thật
-WIFI_PASSWORD = "matkhaucuaban"        # Sửa thành mật khẩu thật
+WIFI_SSID     = "Tequila"      # Hotspot iPhone
+WIFI_PASSWORD = "123456789"   # Mật khẩu hotspot
 HTTP_PORT     = 80
 
 # ─── CLOUD SERVER ───
