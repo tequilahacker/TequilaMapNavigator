@@ -12,6 +12,8 @@ import sys
 import math
 import select
 import shutil
+import webbrowser
+import urllib.parse
 
 # ═══════════════════════════════════════════════════
 # CẤU HÌNH KẾT NỐI (Mặc định dùng Render Cloud của bạn)
@@ -49,6 +51,18 @@ sim_index = 0
 is_simulating = False
 sim_thread = None
 available_routes = []
+
+# Google Maps API Key để nhúng vào URL browser
+GOOGLE_MAPS_API_KEY = "AIzaSyA_8KDFY3kn4B7zF7E6pDOz10aAGnj0kJ4"
+
+# Theo dõi tuyến đường đích hiện tại
+current_destination_name = ""
+current_origin = None
+last_browser_open_time = 0
+
+# Theo dõi TTS để không phát trùng
+last_tts_text = ""
+last_tts_time = 0
 
 def check_ffmpeg():
     """Kiểm tra xem ffmpeg có sẵn trên hệ thống hay không."""
@@ -146,6 +160,84 @@ def start_route_simulation(route_points):
     sim_thread = threading.Thread(target=simulation_loop, daemon=True)
     sim_thread.start()
 
+def speak_local(text):
+    """Phát giọng nói tiếng Việt trực tiếp qua loa Mac bằng lệnh 'say' có sẵn của macOS.
+    
+    Đây là TTS cục bộ - không cần fetch từ server, nghe ngay lập tức!
+    Mô phỏng đúng hành vi của loa ESP32 trên xe thật.
+    """
+    global last_tts_text, last_tts_time
+    
+    if not text or not text.strip():
+        return
+    
+    # Tránh phát trùng trong vòng 3 giây
+    now = time.time()
+    if text == last_tts_text and now - last_tts_time < 3.0:
+        return
+    
+    last_tts_text = text
+    last_tts_time = now
+    
+    def _say():
+        try:
+            # Giọng đọc tiếng Việt: Lan (nếu có), hoặc dùng tiếng Anh để đọc text
+            # macOS có sẵn giọng Lan (Vietnamese)
+            subprocess.Popen(
+                ["say", "-v", "Lan", text],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+        except FileNotFoundError:
+            pass  # 'say' không khả dụng
+        except Exception as e:
+            print(f"\n[TTS Cục bộ] Lỗi: {e}")
+    
+    t = threading.Thread(target=_say, daemon=True)
+    t.start()
+
+def open_google_maps_browser(origin_lat, origin_lon, dest_name, dest_lat=None, dest_lon=None):
+    """Mở Google Maps trên browser với tuyến đường đã chọn.
+    
+    Thay thế cho việc phải mở điện thoại xem Web UI - giờ bản đồ tự mở trên Mac!
+    Hiển thị chế độ điều hướng Google Maps thực sự với tất cả chi tiết (quán cafe, tiệm ăn...).
+    """
+    global last_browser_open_time
+    
+    now = time.time()
+    # Không mở lại trong vòng 10 giây để tránh spam tab
+    if now - last_browser_open_time < 10.0:
+        return
+    
+    last_browser_open_time = now
+    
+    origin_str = f"{origin_lat},{origin_lon}"
+    
+    if dest_lat and dest_lon:
+        dest_str = f"{dest_lat},{dest_lon}"
+    else:
+        # Encode tên địa điểm cho URL
+        dest_str = urllib.parse.quote(dest_name)
+    
+    # Google Maps Directions URL: chế độ xe máy (travelmode=bicycling là gần nhất với two-wheeler)
+    maps_url = (
+        f"https://www.google.com/maps/dir/{origin_str}/{dest_str}"
+        f"/@{origin_lat},{origin_lon},14z"
+        f"/data=!4m2!4m1!3e1"  # 3e1 = xe đạp/máy, 3e0 = lái xe ô tô
+    )
+    
+    print(f"\n🗺️ [GOOGLE MAPS] Đang mở bản đồ Google Maps trên browser...")
+    print(f"📍 Điểm đến: {dest_name}")
+    print(f"🔗 URL: {maps_url}")
+    
+    def _open():
+        try:
+            webbrowser.open(maps_url)
+        except Exception as e:
+            print(f"[Browser] Lỗi mở browser: {e}")
+    
+    threading.Thread(target=_open, daemon=True).start()
+
 def print_hud():
     """Vẽ giao diện HUD xe máy giả lập lên Terminal."""
     os.system('clear' if os.name == 'posix' else 'cls')
@@ -189,6 +281,9 @@ def print_hud():
         print("💡 [NHẤN PHÍM ENTER] để chọn Tuyến đường tối ưu...")
     else:
         print("💡 [NHẤN PHÍM ENTER] để nói 'Hey Tequila' qua Mic MacBook...")
+    if current_destination_name:
+        print(f"🗺️ [Google Maps đang mở] Điểm đến: {current_destination_name}")
+        print("   → Xem bản đồ và tuyến đường chi tiết trên tab browser!")
     print("="*60)
 
 def save_and_play_pcm(pcm_data):
@@ -307,6 +402,13 @@ def polling_loop():
                         available_routes = data["show_routes"]["routes"]
                         current_hud["instruction"] = "Chọn tuyến đường trên Terminal..."
                         hud_changed = True
+                        # Lưu tên điểm đến từ routes nếu có
+                        if available_routes and "label" in available_routes[0]:
+                            global current_destination_name
+                            # Sử dụng summary của tuyến đầu tiên
+                            rt0 = available_routes[0]
+                            if rt0.get("summary"):
+                                current_destination_name = rt0["summary"]
                     else:
                         available_routes = []
                     
@@ -324,6 +426,20 @@ def polling_loop():
                         # Khởi động mô phỏng nếu có tuyến đường mới từ server
                         if "route" in up and up["route"] and not is_simulating:
                             start_route_simulation(up["route"])
+                            
+                            # Mở Google Maps trên browser khi bắt đầu hành trình mới
+                            origin_lat = current_hud["lat"]
+                            origin_lon = current_hud["lon"]
+                            dest_info = up.get("dest", {})
+                            dest_name = dest_info.get("name", current_destination_name) if isinstance(dest_info, dict) else current_destination_name
+                            if dest_name:
+                                global current_destination_name
+                                if up.get("route") and len(up["route"]) > 0:
+                                    dest_pt = up["route"][-1]
+                                    open_google_maps_browser(
+                                        origin_lat, origin_lon, dest_name,
+                                        dest_lat=dest_pt[0], dest_lon=dest_pt[1]
+                                    )
                         hud_changed = True
                         
                     # 3. Cập nhật cảnh báo tốc độ/camera
@@ -338,10 +454,17 @@ def polling_loop():
                     # 4. Cập nhật chỉ đường chữ và âm thanh
                     if "voice" in data and data["voice"]:
                         vo = data["voice"]
-                        current_hud["instruction"] = vo.get("text", "Đang chỉ đường...")
+                        voice_text = vo.get("text", "Đang chỉ đường...")
+                        current_hud["instruction"] = voice_text
                         hud_changed = True
                         
-                        # Kéo âm thanh PCM về phát
+                        # ── Phát TTS cục bộ ngay lập tức ──
+                        # Bỏ qua các câu chứa emoji/debug prefix
+                        clean_voice = voice_text.lstrip()
+                        if not clean_voice.startswith(("🗣️", "🏍️", "[MÔ")):
+                            speak_local(clean_voice)
+                        
+                        # Kéo âm thanh PCM về phát (backup nếu TTS cục bộ không hoạt động)
                         if vo.get("has_audio"):
                             fetch_audio_from_server()
                             
@@ -363,7 +486,10 @@ def polling_loop():
         time.sleep(POLL_INTERVAL)
 
 def select_route_on_server(index):
-    """Gửi lựa chọn tuyến đường lên server."""
+    """Gửi lựa chọn tuyến đường lên server và mở Google Maps trên browser."""
+    # Lưu thông tin tuyến đường được chọn trước khi gửi
+    selected_route = available_routes[index] if 0 <= index < len(available_routes) else None
+    
     try:
         addr = socket.getaddrinfo(SERVER_HOST, SERVER_PORT, socket.AF_INET)[0][-1]
         s = socket.socket()
@@ -385,9 +511,24 @@ def select_route_on_server(index):
         
         s.send(request)
         s.close()
-        print(f"✅ Đã gửi lựa chọn: Tuyến đường {index + 1}!")
+        print(f"\u2705 Đã gửi lựa chọn: Tuyến đường {index + 1}!")
+        
+        # Mở Google Maps ngay sau khi chọn tuyến
+        if selected_route and selected_route.get("polyline"):
+            poly = selected_route["polyline"]
+            origin_lat = current_hud["lat"]
+            origin_lon = current_hud["lon"]
+            dest_pt = poly[-1] if poly else None
+            dest_name = current_destination_name or selected_route.get("summary", "Diểm đến")
+            if dest_pt:
+                open_google_maps_browser(
+                    origin_lat, origin_lon, dest_name,
+                    dest_lat=dest_pt[0], dest_lon=dest_pt[1]
+                )
+            else:
+                open_google_maps_browser(origin_lat, origin_lon, dest_name)
     except Exception as e:
-        print("❌ Lỗi chọn tuyến đường:", e)
+        print("\u274c Lỗi chọn tuyến đường:", e)
 
 def send_raw_audio_to_server(pcm_data):
     """Gửi âm thanh ghi âm dạng nhị phân PCM thô 16kHz lên server."""
@@ -504,9 +645,23 @@ def record_and_send_voice():
         return False
 
 def simulate_mic_input(user_command_text):
-    """Gửi câu lệnh giọng nói giả định bằng text (Nhập từ bàn phím)."""
+    """Gửi câu lệnh giọng nói giả định bằng text (Nhập từ bàn phím).
+    
+    Tự động phát hiện câu lệnh điều hướng để lưu tên điểm đến.
+    """
+    global current_destination_name
     print(f"\n🗣️ Bạn nhập câu lệnh: '{user_command_text}'")
     print("🤖 Đang truyền lên Server xử lý...")
+    
+    # Phát hiện câu lệnh điều hướng để lưu tên điểm đến
+    text_lower = user_command_text.lower().strip()
+    for keyword in ["đi đến", "đến", "tới", "chỉ đường tới", "chỉ đường đến", "navigate to", "đi tới"]:
+        if keyword in text_lower:
+            destination = text_lower.split(keyword, 1)[1].strip()
+            if destination:
+                current_destination_name = destination
+                print(f"📍 Điểm đến đã nhận dạng: '{destination}'")
+            break
     
     try:
         addr = socket.getaddrinfo(SERVER_HOST, SERVER_PORT, socket.AF_INET)[0][-1]
@@ -533,6 +688,7 @@ def simulate_mic_input(user_command_text):
         print("✅ Đã gửi tín hiệu!")
     except Exception as e:
         print("❌ Lỗi gửi tín hiệu lên Server:", e)
+
 
 def main():
     global is_running

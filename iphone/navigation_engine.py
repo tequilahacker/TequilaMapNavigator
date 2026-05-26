@@ -1,9 +1,10 @@
 # iphone/navigation_engine.py
-# Pythonista 3 - OpenStreetMap (OSM) & OSRM Navigation Engine (100% MIỄN PHÍ)
-# KHÔNG CẦN GOOGLE API KEY - KHÔNG CẦN VISA CARD
+# Pythonista 3 - Google Maps + OpenStreetMap Navigation Engine
+# Hỗ trợ Google Places API để tìm POI chi tiết (quán cafe, nhà hàng, ...)
 import json
 import time
 import math
+import urllib.parse
 
 try:
     import requests    # Pythonista có requests built-in
@@ -31,12 +32,22 @@ class NavigationEngine:
     # 1. GEOCODING: OSM Nominatim (Địa chỉ → Toạ độ)
     # ─────────────────────────────────────────────
     def geocode(self, place_name, region="vn"):
-        """Chuyển tên địa điểm tiếng Việt thành (lat, lon, tên đầy đủ)."""
+        """Chuyển tên địa điểm tiếng Việt thành (lat, lon, tên đầy đủ).
+        
+        Ưu tiên: Google Places Text Search → Google Geocoding → OSM Nominatim
+        Google Places tốt hơn cho POI cụ thể (quán cafe nhỏ, tiệm ăn, cửa hàng...)
+        """
         if not requests:
             # Mock data cho testing ngoài điện thoại
             return (10.7769, 106.7009, place_name)
 
-        # ─── 1. GOOGLE GEOCODING API (Nếu có API Key) ───
+        # ─── 0. GOOGLE PLACES TEXT SEARCH (Tốt nhất cho POI cụ thể) ───
+        if self.api_key:
+            places_result = self._places_text_search(place_name, region)
+            if places_result:
+                return places_result
+
+        # ─── 1. GOOGLE GEOCODING API (Cho địa chỉ, tên đường, quận huyện...) ───
         if self.api_key:
             url = "https://maps.googleapis.com/maps/api/geocode/json"
             params = {
@@ -92,6 +103,121 @@ class NavigationEngine:
             print("[OSM Geocode] Lỗi kết nối Nominatim:", e)
             # Fallback mock data nếu mất mạng
             return (10.7769, 106.7009, place_name)
+
+    def _places_text_search(self, query, region="vn"):
+        """Google Places Text Search API - Tìm POI chi tiết (quán cafe, nhà hàng, cửa hàng...).
+        
+        Tốt hơn Google Geocoding cho các địa điểm cụ thể như tên quán, tên tiệm.
+        Trả về (lat, lon, tên_đầy_đủ) hoặc None nếu không tìm thấy.
+        """
+        if not self.api_key or not requests:
+            return None
+        
+        # Thêm "Việt Nam" vào query để tăng độ chính xác tìm kiếm trong nước
+        search_query = query
+        if "việt nam" not in query.lower() and "vietnam" not in query.lower():
+            search_query = f"{query} Việt Nam"
+        
+        url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
+        params = {
+            "query": search_query,
+            "key": self.api_key,
+            "language": "vi",
+            "region": region,
+        }
+        
+        try:
+            print(f"[Google Places] Tìm kiếm POI: '{query}'...")
+            r = requests.get(url, params=params, timeout=10)
+            data = r.json()
+            
+            if data.get("status") == "OK" and data.get("results"):
+                place = data["results"][0]
+                lat = place["geometry"]["location"]["lat"]
+                lng = place["geometry"]["location"]["lng"]
+                name = place.get("name", query)
+                address = place.get("formatted_address", "")
+                # Hiển thị tên đầy đủ: Tên POI + địa chỉ ngắn
+                display = name
+                if address:
+                    addr_parts = address.split(",")
+                    if len(addr_parts) >= 2:
+                        short_addr = ",".join(addr_parts[:2]).strip()
+                        display = f"{name}, {short_addr}"
+                print(f"[Google Places] ✅ Tìm thấy: '{display}' -> ({lat}, {lng})")
+                return (lat, lng, display)
+            elif data.get("status") == "ZERO_RESULTS":
+                print(f"[Google Places] Không tìm thấy POI: '{query}', thử Geocoding...")
+                return None
+            else:
+                print(f"[Google Places] Lỗi API: {data.get('status')}")
+                return None
+        except Exception as e:
+            print(f"[Google Places] Lỗi kết nối: {e}")
+            return None
+
+    def search_nearby_places(self, lat, lon, keyword, radius_m=2000, max_results=5):
+        """Tìm kiếm địa điểm gần vị trí hiện tại theo từ khóa (dùng Google Places Nearby Search).
+        
+        Args:
+            lat, lon: Toạ độ vị trí hiện tại
+            keyword: Từ khóa tìm kiếm (ví dụ: "cafe", "xăng", "atm", "bệnh viện")
+            radius_m: Bán kính tìm kiếm (mét), mặc định 2km
+            max_results: Số kết quả tối đa trả về
+            
+        Returns:
+            list of dict: [{name, lat, lon, address, rating, distance_m}, ...]
+        """
+        if not self.api_key or not requests:
+            return []
+        
+        url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+        params = {
+            "location": f"{lat},{lon}",
+            "radius": min(radius_m, 50000),  # Max 50km
+            "keyword": keyword,
+            "key": self.api_key,
+            "language": "vi",
+        }
+        
+        try:
+            print(f"[Google Places Nearby] Tìm '{keyword}' trong bán kính {radius_m}m...")
+            r = requests.get(url, params=params, timeout=10)
+            data = r.json()
+            
+            if data.get("status") not in ("OK", "ZERO_RESULTS"):
+                print(f"[Google Places Nearby] Lỗi: {data.get('status')}")
+                return []
+            
+            results = []
+            for place in data.get("results", [])[:max_results]:
+                p_lat = place["geometry"]["location"]["lat"]
+                p_lng = place["geometry"]["location"]["lng"]
+                name = place.get("name", "Không tên")
+                address = place.get("vicinity", "")
+                rating = place.get("rating", 0)
+                
+                # Tính khoảng cách
+                dist = self._distance_m(lat, lon, p_lat, p_lng)
+                
+                results.append({
+                    "name": name,
+                    "lat": p_lat,
+                    "lon": p_lng,
+                    "address": address,
+                    "rating": rating,
+                    "distance_m": int(dist),
+                    "open_now": place.get("opening_hours", {}).get("open_now", None),
+                })
+            
+            # Sắp xếp theo khoảng cách gần nhất
+            results.sort(key=lambda x: x["distance_m"])
+            print(f"[Google Places Nearby] Tìm được {len(results)} địa điểm '{keyword}'.")
+            return results
+        except Exception as e:
+            print(f"[Google Places Nearby] Lỗi: {e}")
+            return []
+
 
     # ─────────────────────────────────────────────
     # 2. WAYPOINT OPTIMIZER: Sắp xếp thứ tự tối ưu

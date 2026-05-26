@@ -2040,15 +2040,18 @@ class NavigatorWebServer:
                                 cam_payload = [{"lat": c["lat"], "lon": c["lon"], "type": c["type"]}
                                                for c in cams]
 
+                            dest_name = server_self.status.get("destination_text", selected.get("dest_name", "Điểm đến"))
                             update_payload = {
                                 "lat": pos[0], "lon": pos[1],
                                 "heading": pos[2] if len(pos) > 2 else 0,
                                 "speed": server_self.gps.get_speed_kmh() if server_self.gps else 0,
                                 "route": [[p[0], p[1]] for p in selected.get("polyline", [])[:30]],
                                 "cameras": cam_payload,
+                                "dest": {"name": dest_name},
                             }
                             server_self.device_state["update"] = update_payload
                             server_self.device_state["show_routes"] = None
+
 
                             def send_bg():
                                 try:
