@@ -400,11 +400,18 @@ def main():
     print("\n[Main] ✅ Hệ thống sẵn sàng! Vào vòng lặp chính.\n")
 
     # ═══════ MAIN LOOP ═══════
-    # Map fetch timer (cập nhật bản đồ Google Maps mỗi MAP_UPDATE_SEC giây)
-    last_map_fetch_ms  = time.ticks_ms()
-    MAP_FETCH_INTERVAL = getattr(config, 'MAP_UPDATE_SEC', 3) * 1000  # ms
-    _last_map_lat      = 0.0
-    _last_map_lon      = 0.0
+    # Map fetch timer (cap nhat ban do moi MAP_UPDATE_SEC giay)
+    last_map_fetch_ms      = time.ticks_ms()
+    MAP_FETCH_INTERVAL     = getattr(config, 'MAP_UPDATE_SEC', 3) * 1000
+    _last_fetch_center_lat = 0.0  # Trung tam cua lan fetch cuoi
+    _last_fetch_center_lon = 0.0
+    # Nguong tai lai ban do: chi re-fetch khi GPS di chuyen > 100m tu lan fetch truoc
+    # 0.0009 deg ~ 100m  (cu la 0.00005 = 5m -> re-fetch lien tuc!)
+    _MAP_REFETCH_DEG       = 0.0009
+    _map_fetching          = False   # Dang block fetch -> khong fetch chong chong
+    _pan_release_ms        = 0       # Thoi diem nha tay sau khi keo
+    _pan_fetch_pending     = False   # Can fetch moi sau khi pan
+    _PAN_DEBOUNCE_MS       = 700     # Cho 700ms sau khi nha tay moi fetch
 
     # ═══ Touch zoom + pan state ═══
     _map_zoom          = 17          # Local zoom (14-19)
@@ -480,6 +487,9 @@ def main():
 
                 # Reset touch state
                 _touch_x0, _touch_y0 = None, None
+                # Pan xong: danh dau can fetch
+                _pan_release_ms    = now_ms
+                _pan_fetch_pending = True
 
 
         # ─── Wake: Vô hiệu hóa ghi âm theo yêu cầu ───
@@ -545,18 +555,37 @@ def main():
                     cloud_data = json.loads(body)
                     process_cloud_status(cloud_data, wifi_server, voice, map_display)
 
-                    # ── (A) Fetch bản đồ Google Maps mỗi 3 giây ──
-                    # Center = GPS hiện tại → bản đồ follow user như Google Maps
-                    now_secs = time.ticks_diff(now_ms, last_map_fetch_ms)
-                    cur_lat = cloud_data.get('gps_lat') or 10.8541
-                    cur_lon = cloud_data.get('gps_lon') or 106.7878
-                    gps_moved = (abs(cur_lat - _last_map_lat) > 0.00005 or
-                                 abs(cur_lon - _last_map_lon) > 0.00005)
+                     # ── (A) Fetch ban do: chi re-fetch khi THUC SU CAN ──
+                     now_secs = time.ticks_diff(now_ms, last_map_fetch_ms)
+                     cur_lat = cloud_data.get('gps_lat') or 10.8541
+                     cur_lon = cloud_data.get('gps_lon') or 106.7878
 
-                    if cur_lat and (now_secs >= MAP_FETCH_INTERVAL or gps_moved):
+                     # Tinh khoang cach GPS tu lan fetch truoc (chi trong GPS-follow mode)
+                     gps_moved_far = (abs(cur_lat - _last_fetch_center_lat) > _MAP_REFETCH_DEG or
+                                      abs(cur_lon - _last_fetch_center_lon) > _MAP_REFETCH_DEG)
+
+                     # Pan debounce: keo ban do xong 700ms moi fetch
+                     pan_ready = (_pan_mode and _pan_fetch_pending and
+                                  _touch_x0 is None and  # khong con dang keo
+                                  time.ticks_diff(now_ms, _pan_release_ms) > _PAN_DEBOUNCE_MS)
+
+                     should_fetch = (
+                         not _map_fetching and    # Khong dang busy fetch
+                         _touch_x0 is None and    # Khong dang keo tay (tranh fetch mid-drag)
+                         (
+                             (not _pan_mode and gps_moved_far) or  # GPS follow: di chuyen du xa
+                             pan_ready or                           # Pan mode: da nha tay 700ms
+                             (_last_fetch_center_lat == 0.0)        # First fetch (luc dau)
+                         )
+                     )
+
+                     if pan_ready:
+                         _pan_fetch_pending = False
+
+                     if should_fetch:
                         last_map_fetch_ms = now_ms
-                        _last_map_lat = cur_lat
-                        _last_map_lon = cur_lon
+                        _last_fetch_center_lat = cur_lat
+                        _last_fetch_center_lon = cur_lon
                         try:
                             zoom = _map_zoom  # Local zoom (không lấy từ cloud)
                             # Center bản đồ: GPS + offset pan (nếu đang pan mode)
@@ -585,10 +614,16 @@ def main():
                                         drv.spi.write(chunk)
                                         drv.cs.value(1)
 
+                                _map_fetching = True
                                 ok = wifi_server._https_get_stream(path, on_map_data)
+                                _map_fetching = False
                                 if ok:
-                                    print("[Map] Ban do OK!")
+                                    # Cap nhat center sau fetch thanh cong
+                                    _last_fetch_center_lat = map_center_lat
+                                    _last_fetch_center_lon = map_center_lon
+                                    print("[Map] Ban do OK! Center=({:.4f},{:.4f}) zoom={}".format(map_center_lat, map_center_lon, zoom))
                                 else:
+                                    _map_fetching = False
                                     print("[Map] Loi tai ban do.")
                         except Exception as _me:
                             if map_display.drv:
