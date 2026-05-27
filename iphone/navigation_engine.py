@@ -1,8 +1,11 @@
 # iphone/navigation_engine.py
 # Pythonista 3 - Google Maps + OpenStreetMap Navigation Engine
-# Hỗ trợ Google Places API, Foursquare Places v3 để tìm POI chi tiết (quán cafe, nhà hàng, ...)
+# HERE Discover API (POI near GPS) + OSM Nominatim + OSRM Routing
 
-# ─── Foursquare Places API v3 (100% miễn phí, 100k req/tháng) ───
+# HERE Maps API Key (dung cho ca map tiles va geocoding/discover)
+HERE_API_KEY = "3RG9AwLcD9ZK8AVD_H50vdb7BX_khn1Fs5O2BEnBGWI"
+
+# ─── Foursquare Places API v3 (backup, key co the het han) ───
 FOURSQUARE_API_KEY = "NSGAT4LTRTSZ51WNKHLUJQTG423QDM2TH5GFKBSYZE3JHHND"
 import json
 import time
@@ -44,7 +47,38 @@ class NavigationEngine:
             # Mock data cho testing ngoài điện thoại
             return (10.7769, 106.7009, place_name)
 
-        # ─── 0. GOOGLE PLACES TEXT SEARCH (Tốt nhất cho POI cụ thể) ───
+        # ─── 0a. HERE Discover API — TÌM POI GẦN GPS (ưu tiên cao nhất khi có GPS) ───
+        # Tốt nhất cho POI: quán cafe, trà sữa, tea zone, tiệm ăn... trong bán kính 5km
+        if near_lat is not None and near_lon is not None and HERE_API_KEY:
+            try:
+                print(f"[HERE Discover] Tìm '{place_name}' gần GPS {near_lat:.4f},{near_lon:.4f}...")
+                r_here = requests.get(
+                    "https://discover.search.hereapi.com/v1/discover",
+                    params={
+                        "q": place_name,
+                        "at": f"{near_lat},{near_lon}",
+                        "limit": 5,
+                        "lang": "vi",
+                        "apiKey": HERE_API_KEY,
+                    },
+                    timeout=8
+                )
+                if r_here.status_code == 200:
+                    items = r_here.json().get("items", [])
+                    if items:
+                        best = items[0]  # already sorted by distance
+                        pos = best.get("position", {})
+                        lat_h = pos.get("lat")
+                        lon_h = pos.get("lng")
+                        name_h = best.get("title", place_name)
+                        dist_m = best.get("distance", 0)
+                        if lat_h and lon_h:
+                            print(f"[HERE Discover] ✅ Tìm thấy: '{name_h}' cách {dist_m}m -> ({lat_h},{lon_h})")
+                            return (float(lat_h), float(lon_h), name_h)
+                    print(f"[HERE Discover] Không tìm thấy '{place_name}' gần GPS, thử Google Places...")
+            except Exception as e_here:
+                print(f"[HERE Discover] Lỗi: {e_here}, thử Google Places...")
+
         if self.api_key:
             places_result = self._places_text_search(place_name, region)
             if places_result:
