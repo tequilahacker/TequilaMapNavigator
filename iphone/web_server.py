@@ -1735,7 +1735,43 @@ class NavigatorWebServer:
                         print("[WebServer] Loi doc file leaflet.js:", e)
                         self.wfile.write(b"")
 
-                # ─── Trang setup Apple Find My (khong can JS) ───
+                # ─── HERE Maps tile proxy cho Leaflet (tranh CORS) ───
+                # Leaflet request: /tile/{z}/{x}/{y}.png → server proxy sang HERE Maps
+                elif self.path.startswith('/tile/'):
+                    try:
+                        _parts = self.path.lstrip('/').split('/')
+                        # /tile/{z}/{x}/{y}.png
+                        _tz, _tx, _ty_raw = int(_parts[1]), int(_parts[2]), _parts[3]
+                        _ty = int(_ty_raw.replace('.png', ''))
+                        _here_key = HERE_API_KEY
+                        _tile_url = (f"https://maps.hereapi.com/v3/base/mc/{_tz}/{_tx}/{_ty}/png"
+                                     f"?apiKey={_here_key}&style=explore.night&ppi=100&lang=vi")
+                        import urllib.request as _ureq
+                        _req = _ureq.Request(_tile_url, headers={'User-Agent': 'TequilaMap/1.0'})
+                        _tresp = _ureq.urlopen(_req, timeout=8)
+                        _tdata = _tresp.read()
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'image/png')
+                        self.send_header('Cache-Control', 'public, max-age=86400')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.end_headers()
+                        self.wfile.write(_tdata)
+                    except Exception as _tile_err:
+                        # HERE fail → fallback OSM
+                        try:
+                            _osm_url = f"https://tile.openstreetmap.org/{_tz}/{_tx}/{_ty}.png"
+                            _req2 = _ureq.Request(_osm_url, headers={'User-Agent': 'TequilaMap/1.0'})
+                            _tresp2 = _ureq.urlopen(_req2, timeout=6)
+                            _tdata2 = _tresp2.read()
+                            self.send_response(200)
+                            self.send_header('Content-Type', 'image/png')
+                            self.send_header('Cache-Control', 'public, max-age=86400')
+                            self.end_headers()
+                            self.wfile.write(_tdata2)
+                        except:
+                            self.send_error(503, "Tile unavailable")
+
+
                 elif self.path == '/setup-findmy':
                     is_setup = server_self.findmy_reader.is_setup
                     if is_setup:

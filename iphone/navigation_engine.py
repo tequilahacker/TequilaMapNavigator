@@ -34,11 +34,11 @@ class NavigationEngine:
     # ─────────────────────────────────────────────
     # 1. GEOCODING: OSM Nominatim (Địa chỉ → Toạ độ)
     # ─────────────────────────────────────────────
-    def geocode(self, place_name, region="vn"):
+    def geocode(self, place_name, region="vn", near_lat=None, near_lon=None):
         """Chuyển tên địa điểm tiếng Việt thành (lat, lon, tên đầy đủ).
         
-        Ưu tiên: Google Places Text Search → Google Geocoding → OSM Nominatim
-        Google Places tốt hơn cho POI cụ thể (quán cafe nhỏ, tiệm ăn, cửa hàng...)
+        near_lat/near_lon: toa do GPS hien tai de uu tien tim kiem gan day.
+        Uu tien: Google Places Text Search → Google Geocoding → OSM Nominatim
         """
         if not requests:
             # Mock data cho testing ngoài điện thoại
@@ -82,8 +82,13 @@ class NavigationEngine:
             "format": "json",
             "accept-language": "vi",
             "countrycodes": region,
-            "limit": 1
+            "limit": 5
         }
+        # Neu co GPS, tim trong vong 8km truoc (uu tien gan ban)
+        if near_lat is not None and near_lon is not None:
+            delta = 0.07  # ~8km
+            params["viewbox"] = f"{near_lon-delta},{near_lat-delta},{near_lon+delta},{near_lat+delta}"
+            params["bounded"] = 1
         headers = {
             "User-Agent": "TequilaMotorcycleNavigator/1.0 (tequila@navigator.local)"
         }
@@ -107,9 +112,12 @@ class NavigationEngine:
         # ─── 3. PHOTON (Komoot) — fuzzy search tốt cho POI tiếng Việt ───
         try:
             print(f"[Photon] Tìm POI fuzzy: '{place_name}'...")
+            _photon_params = {"q": place_name, "countrycode": "vn", "limit": 3, "lang": "vi"}
+            if near_lat is not None: _photon_params["lat"] = near_lat
+            if near_lon is not None: _photon_params["lon"] = near_lon
             r3 = requests.get(
                 "https://photon.komoot.io/api/",
-                params={"q": place_name, "countrycode": "vn", "limit": 3, "lang": "vi"},
+                params=_photon_params,
                 timeout=10,
                 headers={"User-Agent": "TequilaMap/2.0"}
             )
@@ -129,7 +137,8 @@ class NavigationEngine:
 
         # ─── 4. FOURSQUARE PLACES v3 (Tìm quán nhỏ, POI ở VN rất tốt) ───
         try:
-            fsq_result = self._foursquare_search(place_name, near="Ho Chi Minh City, Vietnam")
+            _fsq_near = f"{near_lat},{near_lon}" if near_lat else "Ho Chi Minh City, Vietnam"
+            fsq_result = self._foursquare_search(place_name, near=_fsq_near, ll=(near_lat, near_lon) if near_lat else None)
             if fsq_result:
                 print(f"[Foursquare] ✅ Tìm thấy: {fsq_result[2]} -> ({fsq_result[0]}, {fsq_result[1]})")
                 return fsq_result
@@ -169,7 +178,7 @@ class NavigationEngine:
         print(f"[Geocode] Tất cả fallback thất bại — dùng trung tâm HCMC cho: {place_name}")
         return (10.7769, 106.7009, place_name)
 
-    def _foursquare_search(self, query, near="Ho Chi Minh City, Vietnam", limit=3):
+    def _foursquare_search(self, query, near="Ho Chi Minh City, Vietnam", limit=3, ll=None):
         """Foursquare Places API v3 — Tìm POI theo tên (quán nhỏ, tiệm ăn, cửa hàng...).
         
         Miễn phí 100k req/tháng. Tốt hơn Overpass cho POI tên tiếng Việt phổ thông.
@@ -180,7 +189,12 @@ class NavigationEngine:
         try:
             r = requests.get(
                 "https://api.foursquare.com/v3/places/search",
-                params={"query": query, "near": near, "limit": limit, "fields": "name,geocodes,location"},
+                params={
+                    "query": query,
+                    "limit": limit,
+                    "fields": "name,geocodes,location",
+                    **({"ll": f"{ll[0]},{ll[1]}", "radius": 10000} if ll else {"near": near})
+                },
                 headers={"Authorization": FOURSQUARE_API_KEY, "Accept": "application/json"},
                 timeout=8
             )
@@ -808,9 +822,9 @@ class NavigationEngine:
         if not requests:
             return [self._mock_route(origin_lat, origin_lon)]
 
-        # Giải mã destination
+        # Giải mã destination - truyen GPS de tim gan ban
         if isinstance(destination, str):
-            coords_dest = self.geocode(destination)
+            coords_dest = self.geocode(destination, near_lat=origin_lat, near_lon=origin_lon)
             if not coords_dest:
                 return []
             dest_lat, dest_lon, dest_name = coords_dest
