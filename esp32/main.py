@@ -555,34 +555,34 @@ def main():
                     cloud_data = json.loads(body)
                     process_cloud_status(cloud_data, wifi_server, voice, map_display)
 
-                     # ── (A) Fetch ban do: chi re-fetch khi THUC SU CAN ──
-                     now_secs = time.ticks_diff(now_ms, last_map_fetch_ms)
-                     cur_lat = cloud_data.get('gps_lat') or 10.8541
-                     cur_lon = cloud_data.get('gps_lon') or 106.7878
+                    # ── (A) Fetch ban do: chi re-fetch khi THUC SU CAN ──
+                    now_secs = time.ticks_diff(now_ms, last_map_fetch_ms)
+                    cur_lat = cloud_data.get('gps_lat') or 10.8541
+                    cur_lon = cloud_data.get('gps_lon') or 106.7878
 
-                     # Tinh khoang cach GPS tu lan fetch truoc (chi trong GPS-follow mode)
-                     gps_moved_far = (abs(cur_lat - _last_fetch_center_lat) > _MAP_REFETCH_DEG or
-                                      abs(cur_lon - _last_fetch_center_lon) > _MAP_REFETCH_DEG)
+                    # Tinh khoang cach GPS tu lan fetch truoc (chi trong GPS-follow mode)
+                    gps_moved_far = (abs(cur_lat - _last_fetch_center_lat) > _MAP_REFETCH_DEG or
+                                     abs(cur_lon - _last_fetch_center_lon) > _MAP_REFETCH_DEG)
 
-                     # Pan debounce: keo ban do xong 700ms moi fetch
-                     pan_ready = (_pan_mode and _pan_fetch_pending and
-                                  _touch_x0 is None and  # khong con dang keo
-                                  time.ticks_diff(now_ms, _pan_release_ms) > _PAN_DEBOUNCE_MS)
+                    # Pan debounce: keo ban do xong 700ms moi fetch
+                    pan_ready = (_pan_mode and _pan_fetch_pending and
+                                 _touch_x0 is None and  # khong con dang keo
+                                 time.ticks_diff(now_ms, _pan_release_ms) > _PAN_DEBOUNCE_MS)
 
-                     should_fetch = (
-                         not _map_fetching and    # Khong dang busy fetch
-                         _touch_x0 is None and    # Khong dang keo tay (tranh fetch mid-drag)
-                         (
-                             (not _pan_mode and gps_moved_far) or  # GPS follow: di chuyen du xa
-                             pan_ready or                           # Pan mode: da nha tay 700ms
-                             (_last_fetch_center_lat == 0.0)        # First fetch (luc dau)
-                         )
-                     )
+                    should_fetch = (
+                        not _map_fetching and    # Khong dang busy fetch
+                        _touch_x0 is None and    # Khong dang keo tay (tranh fetch mid-drag)
+                        (
+                            (not _pan_mode and gps_moved_far) or  # GPS follow: di chuyen du xa
+                            pan_ready or                           # Pan mode: da nha tay 700ms
+                            (_last_fetch_center_lat == 0.0)        # First fetch (luc dau)
+                        )
+                    )
 
-                     if pan_ready:
-                         _pan_fetch_pending = False
+                    if pan_ready:
+                        _pan_fetch_pending = False
 
-                     if should_fetch:
+                    if should_fetch:
                         last_map_fetch_ms = now_ms
                         _last_fetch_center_lat = cur_lat
                         _last_fetch_center_lon = cur_lon
