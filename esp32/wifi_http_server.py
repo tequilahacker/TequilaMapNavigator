@@ -18,11 +18,11 @@ import config
 
 # Kiểm tra có ssl không (MicroPython ESP-IDF có ussl)
 try:
-    import ussl as ssl
+    import ssl
     HAS_SSL = True
 except ImportError:
     try:
-        import ssl
+        import ussl as ssl
         HAS_SSL = True
     except ImportError:
         HAS_SSL = False
@@ -37,7 +37,22 @@ class WiFiHTTPServer:
     """
 
     def __init__(self):
-        self.wlan = network.WLAN(network.STA_IF)
+        self.wlan = None
+        try:
+            self.wlan = network.WLAN(network.STA_IF)
+        except Exception as e:
+            print(f"[WiFi] Lỗi khởi tạo driver: {e}")
+            print("[WiFi] Thử khắc phục bằng cách tắt AP_IF...")
+            try:
+                time.sleep_ms(300)
+                ap = network.WLAN(network.AP_IF)
+                ap.active(False)
+                time.sleep_ms(300)
+                self.wlan = network.WLAN(network.STA_IF)
+            except Exception as e2:
+                print(f"[WiFi] Không thể khởi tạo WiFi driver: {e2}")
+                print("[WiFi] Tiếp tục chạy không có WiFi (offline mode).")
+                self.wlan = None
         self._sock = None
         self._running = False
         self.ip = None
@@ -68,9 +83,19 @@ class WiFiHTTPServer:
     # ═══════════════════════════════════════════════════
     # WIFI
     # ═══════════════════════════════════════════════════
-    def connect_wifi(self, retries=5):
-        """Kết nối WiFi. Trả về True nếu thành công."""
-        self.wlan.active(True)
+    def connect_wifi(self, retries=5, timeout_ms=12000):
+        """Kết nối WiFi. Trả về True nếu thành công.
+        timeout_ms: toi da cho moi lan thu (ms). Tang len 12s cho iPhone hotspot 802.11ax.
+        """
+        if self.wlan is None:
+            print("[WiFi] Driver không khởi tạo được — bỏ qua kết nối.")
+            return False
+        try:
+            self.wlan.active(True)
+        except Exception as e:
+            print(f"[WiFi] Không thể kích hoạt WiFi: {e}")
+            return False
+        time.sleep_ms(100)
 
         if self.wlan.isconnected():
             self.ip = self.wlan.ifconfig()[0]
@@ -80,11 +105,26 @@ class WiFiHTTPServer:
 
         for attempt in range(1, retries + 1):
             print(f"[WiFi] Kết nối '{config.WIFI_SSID}' (lần {attempt}/{retries})...")
-            self.wlan.connect(config.WIFI_SSID, config.WIFI_PASSWORD)
+            try:
+                # Cycle driver de xoa trang thai cu (quan trong khi reconnect sau ngat ket noi)
+                self.wlan.active(False)
+                time.sleep_ms(300)
+                self.wlan.active(True)
+                time.sleep_ms(300)
+                self.wlan.connect(config.WIFI_SSID, config.WIFI_PASSWORD)
+            except OSError as e:
+                print(f"[WiFi] Lỗi kết nối: {e}")
+                time.sleep_ms(1000)
+                continue
 
-            # Chờ tối đa 15 giây
-            for _ in range(150):
+            # Chờ tối đa timeout_ms
+            steps = timeout_ms // 100
+            for _ in range(steps):
                 if self.wlan.isconnected():
+                    break
+                st = self.wlan.status()
+                if st not in (1000, 1001):  # Loi xac thuc ro rang -> thoat som
+                    print(f"[WiFi] Loi xac thuc: status={st}")
                     break
                 time.sleep_ms(100)
 
@@ -94,30 +134,70 @@ class WiFiHTTPServer:
                 self._is_connected = True
                 return True
             else:
-                print(f"[WiFi] ❌ Lần {attempt} thất bại.")
-                self.wlan.disconnect()
-                time.sleep(1)
+                st = self.wlan.status()
+                print(f"[WiFi] ❌ Lần {attempt} thất bại (status={st}).")
+                time.sleep_ms(500)
 
-        print("[WiFi] ❌ Không thể kết nối WiFi sau nhiều lần thử.")
+        print("[WiFi] ❌ Không thể kết nối WiFi.")
         self._is_connected = False
         return False
 
     def check_wifi(self):
-        """Kiểm tra và tự reconnect nếu mất WiFi."""
-        if not self.wlan.isconnected():
+        """Kiểm tra và tự reconnect nếu mất WiFi.
+        Chi thu 1 lan, timeout 5 giay de khong block main loop.
+        Main loop se goi lai sau 3 giay neu that bai.
+        """
+        if self.wlan is None:
+            return False
+        try:
+            if not self.wlan.isconnected():
+                self._is_connected = False
+                print("[WiFi] Mat ket noi, thu reconnect 1 lan...")
+                return self.connect_wifi(retries=2, timeout_ms=12000)
+            self._is_connected = True
+            return True
+        except Exception as e:
+            print(f"[WiFi] Loi check_wifi: {e}")
             self._is_connected = False
-            print("[WiFi] Mất kết nối, đang reconnect...")
-            return self.connect_wifi(retries=2)
-        self._is_connected = True
-        return True
+            return False
 
     # ═══════════════════════════════════════════════════
     # CLOUD POLLING (HTTPS tới tequilamap.onrender.com)
     # ═══════════════════════════════════════════════════
+    def _decode_chunked(self, body_bytes):
+        """Giải mã chunked transfer encoding của HTTP/1.1."""
+        decoded = b""
+        idx = 0
+        n = len(body_bytes)
+        while idx < n:
+            line_end = body_bytes.find(b"\r\n", idx)
+            if line_end == -1:
+                break
+            line = body_bytes[idx:line_end]
+            semi = line.find(b";")
+            if semi != -1:
+                line = line[:semi]
+            try:
+                chunk_size = int(line.strip(), 16)
+            except ValueError:
+                break
+            idx = line_end + 2
+            if chunk_size == 0:
+                break
+            if idx + chunk_size <= n:
+                decoded += body_bytes[idx : idx + chunk_size]
+                idx += chunk_size + 2
+            else:
+                decoded += body_bytes[idx:]
+                break
+        return decoded
+
     def _https_post(self, path, payload_str):
         """Gửi HTTPS POST request tới Cloud server.
         Trả về body string nếu thành công, None nếu thất bại.
         """
+        import gc
+        gc.collect()
         try:
             addr_info = socket.getaddrinfo(self._cloud_host, self._cloud_port)
             if not addr_info:
@@ -134,7 +214,8 @@ class WiFiHTTPServer:
                     s = ssl.wrap_socket(s, server_hostname=self._cloud_host)
                 except Exception as e:
                     print("[Cloud] SSL wrap error:", e)
-                    s.close()
+                    try: s.close()
+                    except: pass
                     return None
 
             body_bytes = payload_str.encode("utf-8") if payload_str else b""
@@ -147,13 +228,13 @@ class WiFiHTTPServer:
                 f"\r\n"
             ).encode() + body_bytes
 
-            s.send(req)
+            s.write(req)
 
             # Đọc response
             resp = b""
             while True:
                 try:
-                    chunk = s.recv(2048)
+                    chunk = s.read(2048)
                     if not chunk:
                         break
                     resp += chunk
@@ -163,14 +244,28 @@ class WiFiHTTPServer:
 
             # Tách body
             if b"\r\n\r\n" in resp:
-                return resp.split(b"\r\n\r\n", 1)[1].decode("utf-8", errors="ignore")
+                header_part, body_part = resp.split(b"\r\n\r\n", 1)
+                
+                # Kiểm tra xem có chunked không
+                is_chunked = False
+                for line in header_part.split(b"\r\n"):
+                    if line.lower().startswith(b"transfer-encoding:") and b"chunked" in line.lower():
+                        is_chunked = True
+                        break
+                
+                if is_chunked:
+                    body_part = self._decode_chunked(body_part)
+                
+                return body_part.decode("utf-8", "ignore")
             return None
         except Exception as e:
             print("[Cloud] HTTPS POST lỗi:", e)
             return None
 
-    def _https_get(self, path):
-        """Gửi HTTPS GET request tới Cloud server. Trả về body string."""
+    def _https_get(self, path, raw=False):
+        """Gửi HTTPS GET request tới Cloud server. Trả về body string hoặc bytes."""
+        import gc
+        gc.collect()
         try:
             addr_info = socket.getaddrinfo(self._cloud_host, self._cloud_port)
             if not addr_info:
@@ -186,7 +281,8 @@ class WiFiHTTPServer:
                     s = ssl.wrap_socket(s, server_hostname=self._cloud_host)
                 except Exception as e:
                     print("[Cloud] SSL wrap error:", e)
-                    s.close()
+                    try: s.close()
+                    except: pass
                     return None
 
             req = (
@@ -196,12 +292,12 @@ class WiFiHTTPServer:
                 f"\r\n"
             ).encode()
 
-            s.send(req)
+            s.write(req)
 
             resp = b""
             while True:
                 try:
-                    chunk = s.recv(2048)
+                    chunk = s.read(2048)
                     if not chunk:
                         break
                     resp += chunk
@@ -210,11 +306,138 @@ class WiFiHTTPServer:
             s.close()
 
             if b"\r\n\r\n" in resp:
-                return resp.split(b"\r\n\r\n", 1)[1].decode("utf-8", errors="ignore")
+                header_part, body_part = resp.split(b"\r\n\r\n", 1)
+                
+                # Kiểm tra xem có chunked không
+                is_chunked = False
+                for line in header_part.split(b"\r\n"):
+                    if line.lower().startswith(b"transfer-encoding:") and b"chunked" in line.lower():
+                        is_chunked = True
+                        break
+                
+                if is_chunked:
+                    body_part = self._decode_chunked(body_part)
+                
+                if raw:
+                    return body_part
+                return body_part.decode("utf-8", "ignore")
             return None
         except Exception as e:
             print("[Cloud] HTTPS GET lỗi:", e)
             return None
+
+    def _https_get_stream(self, path, on_data_fn):
+        """Gửi HTTPS GET request tới Cloud server và stream body qua callback."""
+        import gc
+        gc.collect()
+        s = None
+        try:
+            addr_info = socket.getaddrinfo(self._cloud_host, self._cloud_port)
+            if not addr_info:
+                return False
+            addr = addr_info[0][-1]
+
+            s = socket.socket()
+            s.settimeout(30.0)  # 30s: du cho SSL handshake + tai 120KB anh ban do
+            s.connect(addr)
+
+            if self._cloud_ssl:
+                try:
+                    # Dung wrap_socket don gian, tranh SSLContext gay crash tren MicroPython
+                    s = ssl.wrap_socket(s, server_hostname=self._cloud_host)
+                except Exception as e:
+                    print("[Cloud] SSL wrap error:", e)
+                    try: s.close()
+                    except: pass
+                    return False
+
+            req = (
+                f"GET {path} HTTP/1.1\r\n"
+                f"Host: {self._cloud_host}\r\n"
+                f"Connection: close\r\n"
+                f"\r\n"
+            ).encode()
+
+            s.write(req)
+
+            # Đọc headers trước
+            header_buf = b""
+            while b"\r\n\r\n" not in header_buf:
+                chunk = s.read(128)
+                if not chunk:
+                    break
+                header_buf += chunk
+
+            if b"\r\n\r\n" not in header_buf:
+                s.close()
+                return False
+
+            parts = header_buf.split(b"\r\n\r\n", 1)
+            header_part = parts[0]
+            initial_body = parts[1]
+
+            # Kiểm tra xem có chunked không
+            is_chunked = False
+            for line in header_part.split(b"\r\n"):
+                if line.lower().startswith(b"transfer-encoding:") and b"chunked" in line.lower():
+                    is_chunked = True
+                    break
+
+            # Stream body
+            if is_chunked:
+                # Trình giải mã chunked dòng
+                buf = initial_body
+                while True:
+                    c_end = buf.find(b"\r\n")
+                    if c_end == -1:
+                        # Cần đọc thêm
+                        chunk = s.read(512)
+                        if not chunk:
+                            break
+                        buf += chunk
+                        continue
+
+                    size_line = buf[:c_end]
+                    semi = size_line.find(b";")
+                    if semi != -1:
+                        size_line = size_line[:semi]
+                    try:
+                        chunk_size = int(size_line.strip(), 16)
+                    except ValueError:
+                        break
+
+                    if chunk_size == 0:
+                        break
+
+                    needed_len = c_end + 2 + chunk_size + 2
+                    while len(buf) < needed_len:
+                        chunk = s.read(1024)
+                        if not chunk:
+                            break
+                        buf += chunk
+
+                    data_start = c_end + 2
+                    data_end = data_start + chunk_size
+                    on_data_fn(buf[data_start:data_end])
+
+                    buf = buf[needed_len:]
+            else:
+                if initial_body:
+                    on_data_fn(initial_body)
+                while True:
+                    chunk = s.read(512)  # Chunk nho 512b tranh timeout
+                    if not chunk:
+                        break
+                    on_data_fn(chunk)
+
+            s.close()
+            return True
+        except Exception as e:
+            print("[Cloud] Stream GET lỗi:", e)
+            if s:
+                try: s.close()
+                except: pass
+            return False
 
     def cloud_boot(self):
         """Gửi tín hiệu boot lên Cloud server → nhận lời chào + pending_resume."""
@@ -245,6 +468,8 @@ class WiFiHTTPServer:
 
     def cloud_send_voice(self, pcm_bytes):
         """Gửi raw PCM audio từ Mic ESP32 lên Cloud để nhận dạng giọng nói."""
+        import gc
+        gc.collect()
         try:
             addr_info = socket.getaddrinfo(self._cloud_host, self._cloud_port)
             if not addr_info:
@@ -260,7 +485,8 @@ class WiFiHTTPServer:
                     s = ssl.wrap_socket(s, server_hostname=self._cloud_host)
                 except Exception as e:
                     print("[Cloud] SSL wrap error:", e)
-                    s.close()
+                    try: s.close()
+                    except: pass
                     return None
 
             req = (
@@ -272,12 +498,12 @@ class WiFiHTTPServer:
                 f"\r\n"
             ).encode() + pcm_bytes
 
-            s.send(req)
+            s.write(req)
 
             resp = b""
             while True:
                 try:
-                    chunk = s.recv(1024)
+                    chunk = s.read(1024)
                     if not chunk:
                         break
                     resp += chunk
@@ -286,7 +512,7 @@ class WiFiHTTPServer:
             s.close()
 
             if b"\r\n\r\n" in resp:
-                return resp.split(b"\r\n\r\n", 1)[1].decode("utf-8", errors="ignore")
+                return resp.split(b"\r\n\r\n", 1)[1].decode("utf-8", "ignore")
             return None
         except Exception as e:
             print("[Cloud] Gửi voice error:", e)
@@ -375,6 +601,8 @@ class WiFiHTTPServer:
         """Tải audio PCM từ Cloud về phát qua loa I2S.
         Gọi sau khi poll_cloud() phát hiện có audio mới.
         """
+        import gc
+        gc.collect()
         body_bytes = None
         try:
             addr_info = socket.getaddrinfo(self._cloud_host, self._cloud_port)
@@ -399,12 +627,12 @@ class WiFiHTTPServer:
                 f"Connection: close\r\n"
                 f"\r\n"
             ).encode()
-            s.send(req)
+            s.write(req)
 
             resp = b""
             while True:
                 try:
-                    chunk = s.recv(4096)
+                    chunk = s.read(4096)
                     if not chunk:
                         break
                     resp += chunk
