@@ -1927,17 +1927,19 @@ class NavigatorWebServer:
                     _fmt  = _qs.get('format', ['png'])[0]
                     _now  = time.time()
 
-                    # Multi-position cache LRU (20 entries, 5 phut TTL)
+                    # Multi-position cache LRU (20 entries, 2 phut TTL)
                     _cache_dict = server_self._map_cache_dict
-                    _ckey = (round(_lat,4), round(_lon,4), _zoom, _fmt)
+                    route_poly = server_self.status.get('route_polyline', [])
+                    # Key PHAI include route presence: khi co route -> cache miss -> render co line xanh
+                    _has_route = bool(route_poly)
+                    _ckey = (round(_lat,4), round(_lon,4), _zoom, _fmt, _has_route)
                     _cached = _cache_dict.get(_ckey)
-                    cache_valid = (_cached and (_now - _cached['ts']) < 300)
+                    cache_valid = (_cached and (_now - _cached['ts']) < 120)  # 2 phut (tu 5 phut)
 
                     if cache_valid:
                         img_bytes = _cached['data']
                         print(f"[MapCache] HIT {_ckey} ({len(img_bytes)//1024}KB)")
                     else:
-                        route_poly = server_self.status.get('route_polyline', [])
                         _gps_lat = float(_qs.get('gps_lat', [str(_lat)])[0])
                         _gps_lon = float(_qs.get('gps_lon', [str(_lon)])[0])
                         _no_marker = _qs.get('no_marker', ['0'])[0] == '1'
@@ -2595,9 +2597,24 @@ class NavigatorWebServer:
                     self.send_json({"status": "ok", "optimized_order": order})
                     
                 elif self.path == '/api/stop':
+                    # Reset TOAN BO trang thai dieu huong
                     server_self._clear_journey_state()
-                    server_self.update_status(is_navigating=False)
+                    server_self.update_status(
+                        is_navigating    = False,
+                        selecting_route  = False,
+                        pending_routes   = [],
+                        route_polyline   = [],
+                        current_instruction = "",
+                        dist_to_turn     = 0,
+                        eta_min          = 0,
+                        voice_reply      = "Đã huỷ hành trình.",
+                    )
                     server_self.device_state["stop"] = True
+                    server_self.device_state["route_polyline"] = []
+                    if server_self.nav_engine:
+                        server_self.nav_engine.current_route_steps = []
+                        server_self.nav_engine.current_step_index  = 0
+                    server_self._map_cache_dict.clear()  # Xoa cache de ESP32 lay anh moi khong co line
                     def do_stop():
                         try:
                             url = f"http://{server_self.esp32_ip}/stop"
@@ -2605,7 +2622,7 @@ class NavigatorWebServer:
                         except Exception:
                             pass
                     threading.Thread(target=do_stop, daemon=True).start()
-                    self.send_json({"status": "ok"})
+                    self.send_json({"status": "ok", "message": "Đã huỷ hành trình"})
                     
                 elif self.path == '/api/update-gps':
                     # Định vị gửi từ trình duyệt tăng diện thoại Safari (tiện lợi khi chạy Cloud)
@@ -2833,7 +2850,7 @@ class NavigatorWebServer:
         def _cloud_sync_loop():
             CLOUD_STATUS_URL = "https://tequilamap.onrender.com/api/status"
             import time as _t
-            _t.sleep(5)  # Cho server khoi dong xong
+            _t.sleep(5)
             while True:
                 try:
                     _r = requests.get(CLOUD_STATUS_URL, timeout=10)
@@ -2841,18 +2858,25 @@ class NavigatorWebServer:
                     if _d.get('gps_lat') and _d.get('gps_lon'):
                         self.status['gps_lat'] = _d['gps_lat']
                         self.status['gps_lon'] = _d['gps_lon']
-                    if _d.get('route_polyline'):
-                        self.status['route_polyline'] = _d['route_polyline']
+                    # Dung 'in' (khong phai truthiness) de xu ly ca [] sau khi stop
+                    if 'route_polyline' in _d:
+                        new_poly = _d.get('route_polyline') or []
+                        old_poly = self.status.get('route_polyline', [])
+                        self.status['route_polyline'] = new_poly
+                        if len(new_poly) != len(old_poly):
+                            self._map_cache_dict.clear()
+                            print(f"[CloudSync] Route {len(old_poly)}->{len(new_poly)} pts, xoa cache ban do")
                     if _d.get('is_navigating') is not None:
                         self.status['is_navigating'] = _d['is_navigating']
                         self.status['current_instruction'] = _d.get('current_instruction', '')
                         self.status['speed_kmh'] = _d.get('speed_kmh', 0)
                         self.status['eta_min'] = _d.get('eta_min')
                         self.status['dist_remain_km'] = _d.get('dist_remain_km')
-                    print(f"[CloudSync] GPS={_d.get('gps_lat'):.4f},{_d.get('gps_lon'):.4f} nav={_d.get('is_navigating')}" if _d.get('gps_lat') else "[CloudSync] No GPS")
+                    pts = len(self.status.get('route_polyline', []))
+                    print(f"[CloudSync] GPS={_d.get('gps_lat'):.4f},{_d.get('gps_lon'):.4f} route={pts}pts nav={_d.get('is_navigating')}" if _d.get('gps_lat') else "[CloudSync] No GPS")
                 except Exception as _ce:
                     print(f"[CloudSync] Err: {_ce}")
-                _t.sleep(30)  # Sync moi 30 giay
+                _t.sleep(15)  # 15s (nhanh hon 2x)
         threading.Thread(target=_cloud_sync_loop, daemon=True).start()
         print("[CloudSync] Started - dong bo GPS+Route tu cloud moi 30s")
 
