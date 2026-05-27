@@ -833,8 +833,8 @@ async function getAlternativeRoutes() {
   const dest = document.getElementById('destination').value.trim();
   const espIP = document.getElementById('esp32-ip').value.trim();
   
-  if (!dest) { alert('Vui lòng nhập điểm đến!'); return; }
-  if (!espIP) { alert('Vui lòng cấu hình IP ESP32!'); return; }
+  if (!dest) { alert('Vui long nhap diem den!'); return; }
+  // espIP chi can khi push truc tiep, khong can cho tinh toan tuyen
   
   const wps = [];
   waypoints.forEach((_, i) => {
@@ -1041,7 +1041,7 @@ a{color:#4a90d9;font-size:14px}
 HERE_API_KEY = "3RG9AwLcD9ZK8AVD_H50vdb7BX_khn1Fs5O2BEnBGWI"
 
 
-def _get_here_map_png(lat, lon, zoom=17, width=240, height=280, route_polyline=None):
+def _get_here_map_png(lat, lon, zoom=17, width=240, height=280, route_polyline=None, gps_lat=None, gps_lon=None, no_marker=False):
     """Ghép tile HERE Maps v3 thành ảnh PNG 240×280.
     
     HERE Maps v3 tile: maps.hereapi.com/v3/base/mc/{z}/{x}/{y}/png
@@ -1079,32 +1079,53 @@ def _get_here_map_png(lat, lon, zoom=17, width=240, height=280, route_polyline=N
             canvas = Image.new("RGB", (TILE_SIZE * 3, TILE_SIZE * 3), (200, 200, 200))
             success = 0
 
-            for row in range(3):
-                for col in range(3):
-                    tx2 = (tile_x - 1 + col) % (2 ** zoom)
-                    ty2 = tile_y - 1 + row
-                    url = (
-                        f"https://maps.hereapi.com/v3/base/mc/{zoom}/{tx2}/{ty2}/png"
-                        f"?apikey={HERE_API_KEY}&style=explore.day&lang=vi"
-                    )
+            # Parallel tile fetch (9 tiles cung luc, nhanh hon 9x so voi sequential)
+            from concurrent.futures import ThreadPoolExecutor, as_completed as _asc
+            def _fetch_here(args):
+                _col, _row, _tx2, _ty2 = args
+                _url = (f"https://maps.hereapi.com/v3/base/mc/{zoom}/{_tx2}/{_ty2}/png"
+                        f"?apikey={HERE_API_KEY}&style=explore.day&lang=vi")
+                try:
+                    _r = _req.get(_url, timeout=8, headers={"User-Agent": "TequilaMap/2.0"})
+                    if _r.status_code == 200:
+                        return (_col, _row, Image.open(io.BytesIO(_r.content)).convert("RGB"))
+                except Exception: pass
+                return None
+            _tasks = [(col, row, (tile_x-1+col)%(2**zoom), tile_y-1+row)
+                      for row in range(3) for col in range(3)]
+            with ThreadPoolExecutor(max_workers=9) as _pool:
+                for _res in _asc([_pool.submit(_fetch_here, t) for t in _tasks], timeout=12):
                     try:
-                        r = _req.get(url, timeout=4,
-                                     headers={"User-Agent": "TequilaMap/2.0"})
-                        if r.status_code == 200:
-                            tile_img = Image.open(io.BytesIO(r.content)).convert("RGB")
-                            canvas.paste(tile_img, (col * TILE_SIZE, row * TILE_SIZE))
+                        _r2 = _res.result()
+                        if _r2:
+                            _c, _rw, _img = _r2
+                            canvas.paste(_img, (_c*TILE_SIZE, _rw*TILE_SIZE))
                             success += 1
-                    except Exception:
-                        pass
+                    except Exception: pass
 
             if success == 0:
-                raise Exception("Tất cả HERE tiles thất bại")
+                raise Exception("Tat ca HERE tiles that bai")
 
             cx = int(TILE_SIZE + off_x)
             cy = int(TILE_SIZE + off_y)
+            
+            # Dark mode filter (CSS order: brightness -> invert -> contrast -> saturate -> hue)
+            try:
+                from PIL import ImageOps, ImageEnhance
+                canvas = ImageEnhance.Brightness(canvas).enhance(0.55)  # brightness TRUOC
+                canvas = ImageOps.invert(canvas)                         # roi moi invert
+                canvas = ImageEnhance.Contrast(canvas).enhance(2.8)
+                canvas = ImageEnhance.Color(canvas).enhance(0.25)
+                hsv = canvas.convert('HSV')
+                h, s, v = hsv.split()
+                h = h.point(lambda p: (p + 142) % 256)
+                canvas = Image.merge('HSV', (h, s, v)).convert('RGB')
+            except Exception as _filter_err:
+                print(f"[DarkFilter] {_filter_err}")
+
             draw = ImageDraw.Draw(canvas)
 
-            # Vẽ route (polyline xanh)
+            # Route line xanh duong dam + vien sang
             if route_polyline and len(route_polyline) >= 2:
                 def _coord_to_canvas(rlat, rlon):
                     rx, ry = _lat_lon_to_tile(rlat, rlon, zoom)
@@ -1112,22 +1133,33 @@ def _get_here_map_png(lat, lon, zoom=17, width=240, height=280, route_polyline=N
                             int((ry - (tile_y - 1)) * TILE_SIZE))
                 pts = [_coord_to_canvas(p[0], p[1]) for p in route_polyline]
                 for i in range(len(pts) - 1):
-                    draw.line([pts[i], pts[i+1]], fill=(0, 85, 255), width=6)
-
-            # Vẽ marker đỏ vị trí user
-            r_m = 10
-            draw.ellipse([cx-r_m, cy-r_m, cx+r_m, cy+r_m],
-                         fill=(220, 30, 30), outline=(255, 255, 255), width=2)
-            draw.polygon([(cx, cy-r_m-8), (cx-6, cy-r_m+2), (cx+6, cy-r_m+2)],
-                         fill=(220, 30, 30))
+                    draw.line([pts[i], pts[i+1]], fill=(30, 120, 255), width=7)
+                    draw.line([pts[i], pts[i+1]], fill=(100, 180, 255), width=3)
 
             left = cx - width // 2
             top  = cy - height // 2
             cropped = canvas.crop((left, top, left + width, top + height))
+
+            # Vẽ marker GPS tại đúng vị trí thực (không nhất thiết ở center)
+            if not no_marker:
+                if gps_lat is not None and gps_lon is not None:
+                    gx, gy = _lat_lon_to_tile(gps_lat, gps_lon, zoom)
+                    mx = int((gx - (tile_x - 1)) * TILE_SIZE) - left
+                    my = int((gy - (tile_y - 1)) * TILE_SIZE) - top
+                else:
+                    mx, my = width // 2, height // 2
+                r_m = 10
+                draw2 = ImageDraw.Draw(cropped)
+                draw2.ellipse([mx-r_m, my-r_m, mx+r_m, my+r_m],
+                             fill=(220, 30, 30), outline=(255, 255, 255), width=2)
+                draw2.polygon([(mx, my-r_m-8), (mx-6, my-r_m+2), (mx+6, my-r_m+2)],
+                             fill=(220, 30, 30))
+
             buf = io.BytesIO()
             cropped.save(buf, format="PNG", optimize=True)
             print(f"[HERE Map] ✅ {success}/9 tiles OK ({len(buf.getvalue())//1024}KB)")
             return buf.getvalue()
+
 
         except Exception as e:
             print(f"[HERE Map] Lỗi: {e} — fallback OSM...")
@@ -1136,7 +1168,7 @@ def _get_here_map_png(lat, lon, zoom=17, width=240, height=280, route_polyline=N
     return _get_osm_map_png_fallback(lat, lon, zoom, width, height, route_polyline)
 
 
-def _get_osm_map_png_fallback(lat, lon, zoom=17, width=240, height=280, route_polyline=None):
+def _get_osm_map_png_fallback(lat, lon, zoom=17, width=240, height=280, route_polyline=None, gps_lat=None, gps_lon=None, no_marker=False):
     """OSM tile stitch fallback — dùng khi HERE key chưa có hoặc lỗi."""
     import math as _math
     import io
@@ -1165,22 +1197,45 @@ def _get_osm_map_png_fallback(lat, lon, zoom=17, width=240, height=280, route_po
     TILE_SIZE = 256
     canvas = Image.new("RGB", (TILE_SIZE * 3, TILE_SIZE * 3), (200, 200, 200))
 
-    for row in range(3):
-        for col in range(3):
-            tx2 = (tile_x - 1 + col) % (2 ** zoom)
-            ty2 = tile_y - 1 + row
-            url = f"https://tile.openstreetmap.org/{zoom}/{tx2}/{ty2}.png"
+    # Parallel OSM tile fetch
+    from concurrent.futures import ThreadPoolExecutor as _TPE, as_completed as _asc2
+    def _fetch_osm(args):
+        _col, _row, _tx2, _ty2 = args
+        _url = f"https://tile.openstreetmap.org/{zoom}/{_tx2}/{_ty2}.png"
+        try:
+            _r = _req.get(_url, timeout=8, headers={"User-Agent": "TequilaMap/2.0 ESP32Navigator"})
+            if _r.status_code == 200:
+                return (_col, _row, Image.open(io.BytesIO(_r.content)).convert("RGB"))
+        except Exception: pass
+        return None
+    _tasks2 = [(col, row, (tile_x-1+col)%(2**zoom), tile_y-1+row)
+               for row in range(3) for col in range(3)]
+    with _TPE(max_workers=9) as _pool2:
+        for _res2 in _asc2([_pool2.submit(_fetch_osm, t) for t in _tasks2], timeout=12):
             try:
-                r = _req.get(url, timeout=4,
-                             headers={"User-Agent": "TequilaMap/2.0 ESP32Navigator"})
-                if r.status_code == 200:
-                    tile_img = Image.open(io.BytesIO(r.content)).convert("RGB")
-                    canvas.paste(tile_img, (col * TILE_SIZE, row * TILE_SIZE))
-            except Exception:
-                pass
+                _r3 = _res2.result()
+                if _r3:
+                    _c2, _rw2, _img2 = _r3
+                    canvas.paste(_img2, (_c2*TILE_SIZE, _rw2*TILE_SIZE))
+            except Exception: pass
 
     cx = int(TILE_SIZE + off_x)
     cy = int(TILE_SIZE + off_y)
+    
+    # Dark mode filter (CSS order: brightness -> invert -> contrast -> saturate -> hue)
+    try:
+        from PIL import ImageOps, ImageEnhance
+        canvas = ImageEnhance.Brightness(canvas).enhance(0.55)  # brightness TRUOC
+        canvas = ImageOps.invert(canvas)                         # roi moi invert
+        canvas = ImageEnhance.Contrast(canvas).enhance(2.8)
+        canvas = ImageEnhance.Color(canvas).enhance(0.25)
+        hsv = canvas.convert('HSV')
+        h, s, v = hsv.split()
+        h = h.point(lambda p: (p + 142) % 256)
+        canvas = Image.merge('HSV', (h, s, v)).convert('RGB')
+    except Exception as _filter_err:
+        print(f"[DarkFilter] {_filter_err}")
+
     draw = ImageDraw.Draw(canvas)
 
     if route_polyline and len(route_polyline) >= 2:
@@ -1188,18 +1243,29 @@ def _get_osm_map_png_fallback(lat, lon, zoom=17, width=240, height=280, route_po
             rx, ry = _lat_lon_to_tile(rlat, rlon, zoom)
             return int((rx - (tile_x - 1)) * TILE_SIZE), int((ry - (tile_y - 1)) * TILE_SIZE)
         pts = [_coord_to_canvas(p[0], p[1]) for p in route_polyline]
+        # Route line xanh duong dam + vien sang
         for i in range(len(pts) - 1):
-            draw.line([pts[i], pts[i+1]], fill=(0, 85, 255), width=5)
-
-    r_m = 10
-    draw.ellipse([cx-r_m, cy-r_m, cx+r_m, cy+r_m],
-                 fill=(220, 30, 30), outline=(255, 255, 255), width=2)
-    draw.polygon([(cx, cy-r_m-8), (cx-6, cy-r_m+2), (cx+6, cy-r_m+2)],
-                 fill=(220, 30, 30))
+            draw.line([pts[i], pts[i+1]], fill=(30, 120, 255), width=7)
+            draw.line([pts[i], pts[i+1]], fill=(100, 180, 255), width=3)
 
     left = cx - width // 2
     top  = cy - height // 2
     cropped = canvas.crop((left, top, left + width, top + height))
+
+    if not no_marker:
+        if gps_lat is not None and gps_lon is not None:
+            gx, gy = _lat_lon_to_tile(gps_lat, gps_lon, zoom)
+            mx = int((gx - (tile_x - 1)) * TILE_SIZE) - left
+            my = int((gy - (tile_y - 1)) * TILE_SIZE) - top
+        else:
+            mx, my = width // 2, height // 2
+        r_m = 10
+        draw2 = ImageDraw.Draw(cropped)
+        draw2.ellipse([mx-r_m, my-r_m, mx+r_m, my+r_m],
+                     fill=(220, 30, 30), outline=(255, 255, 255), width=2)
+        draw2.polygon([(mx, my-r_m-8), (mx-6, my-r_m+2), (mx+6, my-r_m+2)],
+                     fill=(220, 30, 30))
+
     buf = io.BytesIO()
     cropped.save(buf, format="PNG", optimize=True)
     return buf.getvalue()
@@ -1221,8 +1287,10 @@ class NavigatorWebServer:
         self.gps = gps_tracker
         # API keys
         self.GOOGLE_MAPS_API_KEY = "AIzaSyB11vo0te9tTtdBZogm3ltE2X7lHN20zfQ"
-        # Map image cache (tránh spam API, cache 3 giây)
+        # Map image cache (tranh spam API, cache 3 giay)
         self._map_cache = {"data": None, "ts": 0, "lat": 0, "lon": 0}
+        # Multi-position LRU cache: {(lat4dp, lon4dp, zoom, fmt): {'data':bytes, 'ts':float}}
+        self._map_cache_dict = {}
         # Speed alert cooldown (5 phút)
         self._speed_alert_ts = 0
         self.SPEED_ALERT_COOLDOWN = 300  # giây
@@ -1333,7 +1401,15 @@ class NavigatorWebServer:
         def calc_routes():
             try:
                 import requests
-                pos = server_self.gps.get_current() if server_self.gps else (10.7769, 106.7009)
+                pos = None
+                if server_self.gps:
+                    pos = server_self.gps.get_current()
+                if not pos:
+                    _gl = server_self.status.get('gps_lat')
+                    _gn = server_self.status.get('gps_lon')
+                    if _gl and _gn: pos = (_gl, _gn)
+                if not pos: pos = (10.7769, 106.7009)
+                print(f"[Route] Start pos: {pos[0]:.5f},{pos[1]:.5f} -> {destination}")
                 wp_coords = []
                 for wp in waypoints_text:
                     c = server_self.nav_engine.geocode(wp)
@@ -1625,6 +1701,7 @@ class NavigatorWebServer:
                 body = json.dumps(data, ensure_ascii=False).encode('utf-8')
                 self.send_response(code)
                 self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Content-Length', str(len(body)))
                 self.send_header('Access-Control-Allow-Origin', '*')
                 self.end_headers()
                 self.wfile.write(body)
@@ -1769,7 +1846,7 @@ class NavigatorWebServer:
                     except Exception:
                         pass
 
-                    # Xoá arrived_text sau khi ESP32 đọc
+                    # Xoa arrived_text sau khi ESP32 doc
                     status_copy = dict(server_self.status)
                     if status_copy.get("arrived_text"):
                         server_self.status["arrived_text"] = ""
@@ -1814,21 +1891,26 @@ class NavigatorWebServer:
                     _fmt  = _qs.get('format', ['png'])[0]
                     _now  = time.time()
 
-                    cache = server_self._map_cache
-                    gps_moved   = (abs(_lat - cache['lat']) > 0.0001 or
-                                   abs(_lon - cache['lon']) > 0.0001)
-                    cache_valid = (cache.get('data_'+_fmt) and
-                                   (_now - cache['ts'] < 3.0) and not gps_moved)
+                    # Multi-position cache LRU (20 entries, 5 phut TTL)
+                    _cache_dict = server_self._map_cache_dict
+                    _ckey = (round(_lat,4), round(_lon,4), _zoom, _fmt)
+                    _cached = _cache_dict.get(_ckey)
+                    cache_valid = (_cached and (_now - _cached['ts']) < 300)
 
                     if cache_valid:
-                        img_bytes = cache['data_'+_fmt]
+                        img_bytes = _cached['data']
+                        print(f"[MapCache] HIT {_ckey} ({len(img_bytes)//1024}KB)")
                     else:
                         route_poly = server_self.status.get('route_polyline', [])
+                        _gps_lat = float(_qs.get('gps_lat', [str(_lat)])[0])
+                        _gps_lon = float(_qs.get('gps_lon', [str(_lon)])[0])
+                        _no_marker = _qs.get('no_marker', ['0'])[0] == '1'
                         _pil_img = None
                         # OSM tile fallback → PIL Image
                         try:
                             _osm_png = _get_osm_map_png(
-                                _lat, _lon, _zoom, 240, 252, route_poly)
+                                _lat, _lon, _zoom, 240, 252, route_poly,
+                                gps_lat=_gps_lat, gps_lon=_gps_lon, no_marker=_no_marker)
                             if _osm_png:
                                 from PIL import Image
                                 import io as _io
@@ -1851,10 +1933,41 @@ class NavigatorWebServer:
                                 _out = _io.BytesIO()
                                 _pil_img.save(_out, format='PNG', optimize=True)
                                 img_bytes = _out.getvalue()
-                            cache['data_'+_fmt] = img_bytes
-                            cache['ts']  = _now
-                            cache['lat'] = _lat
-                            cache['lon'] = _lon
+                            # Luu vao LRU cache (20 entries max, 5 phut TTL)
+                            if len(_cache_dict) >= 20:
+                                _oldest_k = min(_cache_dict, key=lambda k: _cache_dict[k]['ts'])
+                                del _cache_dict[_oldest_k]
+                            _cache_dict[_ckey] = {'data': img_bytes, 'ts': _now}
+                            print(f"[MapCache] SAVE ({len(img_bytes)//1024}KB) total={len(_cache_dict)}")
+
+                            # Pre-cache 4 adjacent tiles in background
+                            _delta = 0.0020
+                            def _do_precache(_alat, _alon, _az, _af, _rp, _srv):
+                                _ak = (round(_alat,4), round(_alon,4), _az, _af)
+                                if _ak in _srv._map_cache_dict: return
+                                try:
+                                    _ap = _get_osm_map_png(_alat,_alon,_az,240,252,_rp,
+                                                           gps_lat=_alat,gps_lon=_alon,no_marker=True)
+                                    if not _ap: return
+                                    from PIL import Image as _PI; import io as _i2
+                                    _ai = _PI.open(_i2.BytesIO(_ap)).convert('RGB').resize((240,252))
+                                    if _af == 'rgb565':
+                                        _apx=list(_ai.getdata()); _ab=bytearray(240*252*2)
+                                        for _aii,(_ar,_ag,_ab2) in enumerate(_apx):
+                                            _av=((_ar&0xF8)<<8)|((_ag&0xFC)<<3)|(_ab2>>3)
+                                            _ab[_aii*2]=_av>>8; _ab[_aii*2+1]=_av&0xFF
+                                        _ad=bytes(_ab)
+                                    else:
+                                        _aio=_i2.BytesIO(); _ai.save(_aio,format='PNG'); _ad=_aio.getvalue()
+                                    if len(_srv._map_cache_dict)>=20:
+                                        _ok2=min(_srv._map_cache_dict,key=lambda k:_srv._map_cache_dict[k]['ts'])
+                                        del _srv._map_cache_dict[_ok2]
+                                    _srv._map_cache_dict[_ak]={'data':_ad,'ts':time.time()}
+                                    print(f'[PreCache] {_ak} ready ({len(_ad)//1024}KB)')
+                                except Exception as _pe: print(f'[PreCache] {_pe}')
+                            for _alat2, _alon2 in [(_lat+_delta,_lon),(_lat-_delta,_lon),(_lat,_lon+_delta),(_lat,_lon-_delta)]:
+                                threading.Thread(target=_do_precache,
+                                    args=(_alat2,_alon2,_zoom,_fmt,route_poly,server_self),daemon=True).start()
                         else:
                             img_bytes = None
 
@@ -2169,9 +2282,28 @@ class NavigatorWebServer:
                         self.send_json({"status": "error", "message": "Thiếu điểm đến"})
                         return
 
+                    if not server_self.nav_engine:
+                        # Nav engine chua duoc khoi tao - khong the tinh tuyen
+                        print("[Route] ERROR: nav_engine is None - server chua duoc khoi tao dung!")
+                        server_self.update_status(
+                            pending_routes=[], selecting_route=False,
+                            voice_reply="Lỗi server: chưa khởi tạo navigation engine."
+                        )
+                        self.send_json({"status": "error", "message": "Nav engine not initialized"})
+                        return
+
                     def calc_routes():
                         try:
-                            pos = server_self.gps.get_current() if server_self.gps else (10.7769, 106.7009)
+                            # GPS: thu gps tracker, fallback ve status cloud, roi default HCM
+                            pos = None
+                            if server_self.gps:
+                                pos = server_self.gps.get_current()
+                            if not pos:
+                                _gl = server_self.status.get('gps_lat')
+                                _gn = server_self.status.get('gps_lon')
+                                if _gl and _gn: pos = (_gl, _gn)
+                            if not pos: pos = (10.7769, 106.7009)  # Default HCM
+                            print(f"[Route] Start pos: {pos[0]:.5f},{pos[1]:.5f} -> {destination}")
                             wp_coords = []
                             for wp in waypoints_text:
                                 c = server_self.nav_engine.geocode(wp)
@@ -2649,18 +2781,45 @@ class NavigatorWebServer:
         threading.Thread(target=start_nav, daemon=True).start()
 
     def start(self):
-        """Khởi chạy web server trên background thread."""
+        """Khoi chay web server tren background thread."""
         if not HAS_SERVER:
-            print("[WebServer] Thư viện http.server không khả dụng")
+            print("[WebServer] Thu vien http.server khong kha dung")
             return
         handler = self._handle_request(None)
         socketserver.ThreadingTCPServer.allow_reuse_address = True
         self._server = socketserver.ThreadingTCPServer(("0.0.0.0", self.port), handler)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
-        print(f"[WebServer] ✅ Mobile Web UI đang chạy tại: http://localhost:{self.port}")
-        print(f"[WebServer] Mở Safari trên iPhone 14 Pro để bắt đầu điều khiển!")
-        
+        print(f"[WebServer] Mobile Web UI dang chay tai: http://localhost:{self.port}")
+        print(f"[WebServer] Mo Safari tren iPhone 14 Pro de bat dau dieu khien!")
+
+        # Sync GPS + route tu cloud moi 30 giay (local server ko co GPS/route mac dinh)
+        def _cloud_sync_loop():
+            CLOUD_STATUS_URL = "https://tequilamap.onrender.com/api/status"
+            import time as _t
+            _t.sleep(5)  # Cho server khoi dong xong
+            while True:
+                try:
+                    _r = requests.get(CLOUD_STATUS_URL, timeout=10)
+                    _d = _r.json()
+                    if _d.get('gps_lat') and _d.get('gps_lon'):
+                        self.status['gps_lat'] = _d['gps_lat']
+                        self.status['gps_lon'] = _d['gps_lon']
+                    if _d.get('route_polyline'):
+                        self.status['route_polyline'] = _d['route_polyline']
+                    if _d.get('is_navigating') is not None:
+                        self.status['is_navigating'] = _d['is_navigating']
+                        self.status['current_instruction'] = _d.get('current_instruction', '')
+                        self.status['speed_kmh'] = _d.get('speed_kmh', 0)
+                        self.status['eta_min'] = _d.get('eta_min')
+                        self.status['dist_remain_km'] = _d.get('dist_remain_km')
+                    print(f"[CloudSync] GPS={_d.get('gps_lat'):.4f},{_d.get('gps_lon'):.4f} nav={_d.get('is_navigating')}" if _d.get('gps_lat') else "[CloudSync] No GPS")
+                except Exception as _ce:
+                    print(f"[CloudSync] Err: {_ce}")
+                _t.sleep(30)  # Sync moi 30 giay
+        threading.Thread(target=_cloud_sync_loop, daemon=True).start()
+        print("[CloudSync] Started - dong bo GPS+Route tu cloud moi 30s")
+
     def stop(self):
         if self._server:
             self._server.shutdown()
