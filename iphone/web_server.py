@@ -1930,6 +1930,11 @@ class NavigatorWebServer:
                     # Multi-position cache LRU (20 entries, 2 phut TTL)
                     _cache_dict = server_self._map_cache_dict
                     route_poly = server_self.status.get('route_polyline', [])
+                    # PREVIEW: neu chua select route (selecting_route=True), dung tuyen dau tien de preview
+                    if not route_poly:
+                        pending = server_self.status.get('pending_routes', [])
+                        if pending:
+                            route_poly = pending[0].get('full_polyline', pending[0].get('polyline', []))
                     # Key PHAI include route presence: khi co route -> cache miss -> render co line xanh
                     _has_route = bool(route_poly)
                     _ckey = (round(_lat,4), round(_lon,4), _zoom, _fmt, _has_route)
