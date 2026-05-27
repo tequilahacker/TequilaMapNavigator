@@ -3,14 +3,15 @@
 # MicroPython cho ESP32-S3 + 2.8" IPS TFT + INMP441 + MAX98357
 import time
 import machine
-import lvgl as lv
+
+
 
 import config
 from greeting import GreetingScreen
 from journey_state import JourneyStateManager
 from wifi_http_server import WiFiHTTPServer
 from voice_handler import VoiceHandler
-from lvgl_map_2_8 import MapDisplay
+from lvgl_map_2_8 import MapDisplay, MAP_Y, MAP_H
 from battery_manager import BatteryManager
 
 # ═══════════════════════════════════════════════════
@@ -25,25 +26,15 @@ STATE_NAVIGATING = "navigating"   # Đang dẫn đường
 STATE_ARRIVED    = "arrived"      # Đã đến nơi
 
 current_state = STATE_BOOTING
+_last_voice_reply = ""
 
 # ═══════════════════════════════════════════════════
 # KHỞI TẠO HARDWARE
 # ═══════════════════════════════════════════════════
 def init_display():
-    """Khởi tạo LVGL và display driver."""
-    lv.init()
-    try:
-        from ili9xxx import ILI9341
-        drv = ILI9341(
-            mosi=config.TFT_MOSI, clk=config.TFT_CLK, cs=config.TFT_CS,
-            dc=config.TFT_DC, rst=config.TFT_RST,
-            width=config.DISPLAY_WIDTH, height=config.DISPLAY_HEIGHT,
-            rot=config.DISPLAY_ROTATION
-        )
-    except ImportError:
-        print("[Display] ILI9341 driver không có, dùng framebuffer mock.")
-        drv = None
-    return drv
+    """Khởi tạo MapDisplay (ILI9341 SPI trực tiếp, không LVGL)."""
+    # MapDisplay.init() tự khởi tạo SPI + ILI9341 bên trong
+    return True  # display được quản lý bởi MapDisplay object
 
 def init_touch():
     """Khởi tạo XPT2046 resistive touch (ESP32-2432S028 / CYD board).
@@ -241,16 +232,18 @@ def process_cloud_status(data, wifi_server, voice, map_display):
         wifi_server.on_alert(speed_limit, speed_kmh, speed_over, cam_dist, cam_type)
 
     # 4. Voice reply mới từ AI → hiển thị + phát loa
-    if voice_reply:
+    global _last_voice_reply
+    if voice_reply and voice_reply != _last_voice_reply:
+        _last_voice_reply = voice_reply
         if wifi_server.on_voice:
             wifi_server.on_voice(voice_reply, is_audio=False)
-        # Kéo audio PCM về phát loa
-        pcm = wifi_server.poll_cloud_audio()
-        if pcm and hasattr(voice, "audio_out") and voice.audio_out:
-            try:
-                voice.audio_out.write(pcm)
-            except Exception as e:
-                print("[Cloud Audio] Lỗi phát:", e)
+        # Kéo audio PCM về phát loa (vô hiệu hóa tạm thời để tránh tràn RAM)
+        # pcm = wifi_server.poll_cloud_audio()
+        # if pcm and hasattr(voice, "audio_out") and voice.audio_out:
+        #     try:
+        #         voice.audio_out.write(pcm)
+        #     except Exception as e:
+        #         print("[Cloud Audio] Lỗi phát:", e)
 
     # 5. Màn hình chọn 3 tuyến đường
     if selecting and pending_rts and wifi_server.on_show_routes:
@@ -274,6 +267,21 @@ def main():
     print("  TEQUILA MAP - BOOTING")
     print("="*50 + "\n")
 
+    # 0. PRE-INIT WiFi driver TRƯỚC TIÊN — phải làm trước khi các module khác chiếm RAM
+    # WiFi driver cần ~100KB heap liên tục, nếu init sau map/display thì không còn đủ
+    print("[Boot] Pre-init WiFi driver (uu tien RAM)...")
+    import gc
+    gc.collect()
+    try:
+        import network as _net
+        _wlan_preinit = _net.WLAN(_net.STA_IF)
+        _wlan_preinit.active(True)
+        print("[Boot] WiFi driver pre-init OK, RAM tu do:", gc.mem_free())
+        del _wlan_preinit  # Giai phong object, driver van chay nen
+        gc.collect()
+    except Exception as _e:
+        print("[Boot] WiFi pre-init that bai:", _e)
+
     # 1. Khởi tạo hardware
     print("[Boot] Khởi tạo màn hình...")
     display_drv = init_display()
@@ -282,7 +290,7 @@ def main():
     touch = init_touch()
 
     print("[Boot] Khởi tạo battery manager...")
-    battery = BatteryManager(config.BATTERY_ADC_PIN)
+    battery = BatteryManager()
 
     print("[Boot] Khởi tạo voice handler...")
     voice = VoiceHandler(
@@ -293,8 +301,9 @@ def main():
     print("[Boot] Khởi tạo journey state manager...")
     journey = JourneyStateManager()
 
-    print("[Boot] Khởi tạo LVGL map display...")
-    map_display = MapDisplay(display_drv, touch)
+    print("[Boot] Khởi tạo MapDisplay (no-LVGL)...")
+    map_display = MapDisplay()
+    map_display.init()
 
     # ── OpenHaystack BLE (phat beacon de iPhone track qua Find My) ──
     haystack = None
@@ -315,7 +324,8 @@ def main():
 
     print("[Boot] Khởi tạo WiFi HTTP/Cloud Server...")
     wifi_server = WiFiHTTPServer()
-    wifi_ok = wifi_server.connect_wifi()
+    # Chi thu 1 lan (8 giay) khi boot - neu that bai, main loop se retry moi 3 giay
+    wifi_ok = wifi_server.connect_wifi(retries=1, timeout_ms=8000)
 
     if wifi_ok:
         # Cloud mode: không cần start local server
@@ -328,8 +338,8 @@ def main():
         wifi_server.on_stop       = make_on_stop(map_display, journey)
         wifi_server.on_show_routes = make_on_show_routes(map_display, wifi_server)
 
-        map_display.show_notification(f"WiFi OK − {wifi_server.ip}")
-        map_display.update_connection_status(True)
+        map_display.show_notification(f"WiFi OK - {wifi_server.ip}")
+        map_display.update_connection_status(True, False)
 
         # ── Boot handshake lên Cloud / iPhone ──
         if config.USE_CLOUD_SERVER:
@@ -352,14 +362,14 @@ def main():
             except Exception as e:
                 print("[Boot] Lỗi gửi boot local:", e)
     else:
-        map_display.show_notification("⚠️ Không có WiFi! Kiểm tra hotspot iPhone.")
-        map_display.update_connection_status(False)
+        map_display.show_notification("WiFi that bai! Kiem tra hotspot.")
+        map_display.update_connection_status(False, False)
         pending_resume = False
 
     # 2. Boot greeting (loa xe phát lời chào)
     print("[Boot] Chạy boot greeting...")
-    greeting = GreetingScreen(audio_out=voice.speaker)
-    boot_result = greeting.run_boot_sequence(journey, audio_out=voice.speaker)
+    greeting = GreetingScreen(map_display=map_display, audio_out=getattr(voice, 'speaker', None))
+    boot_result = greeting.run_boot_sequence(journey, audio_out=getattr(voice, 'speaker', None))
 
     # 3. Check ACC pin
     engine_on = check_power_source()
@@ -385,6 +395,7 @@ def main():
     last_save_ms       = time.ticks_ms()
     last_gps_push_ms   = time.ticks_ms()
     GPS_PUSH_INTERVAL  = 3000    # Đẩy GPS lên Cloud mỗi 3 giây
+    last_wifi_check_ms = time.ticks_ms() - 15000  # Cooldown 15 giây kết nối WiFi
 
     print("\n[Main] ✅ Hệ thống sẵn sàng! Vào vòng lặp chính.\n")
 
@@ -395,25 +406,85 @@ def main():
     _last_map_lat      = 0.0
     _last_map_lon      = 0.0
 
+    # ═══ Touch zoom + pan state ═══
+    _map_zoom          = 17          # Local zoom (14-19)
+    _pan_lat           = 0.0        # Offset khỏi GPS center (độ)
+    _pan_lon           = 0.0
+    _pan_mode          = False      # True = đang xem bản đồ tự do, không follow GPS
+    _touch_x0          = None       # Touch start (None = không chạm)
+    _touch_y0          = None
+    _touch_t0          = 0
+    _touch_last_tap_t  = 0          # Double-tap detection
+    _touch_x_prev      = None       # Pixel vị trí cuối để tính delta
+    _touch_y_prev      = None
+
     # Turn announcement tracker (tránh thông báo 2 lần cùng 1 đoạn)
     _last_turn_dist = None
 
     while True:
         now_ms = time.ticks_ms()
-        lv.task_handler()  # LVGL render
+        if map_display.tick():  # Trả về True nếu vừa tắt notification
+            last_map_fetch_ms = now_ms - MAP_FETCH_INTERVAL  # Force fetch map ngay lập tức
 
-        # ─── Wake: nút nhấn hoặc VAD ───
+        # ─── Touch Gesture: zoom + pan ───
+        # Tap TRAI (<120px)  = Zoom OUT   Tap PHAI (>=120px) = Zoom IN
+        # Double-tap         = Reset GPS follow (xoa pan)
+        # Keo/Vuot           = Pan ban do (cung chieu ngon tay)
+        if touch:
+            try:
+                t_point = touch.get_touch()  # (x,y) hoac None
+            except Exception:
+                t_point = None
+
+            if t_point:
+                tx, ty = t_point
+                if _touch_x0 is None:
+                    # Bat dau cham
+                    _touch_x0, _touch_y0 = tx, ty
+                    _touch_t0 = now_ms
+                    _touch_x_prev, _touch_y_prev = tx, ty
+                else:
+                    # Dang keo -> tinh delta va pan
+                    px_scale = 0.000006 * (2 ** (19 - _map_zoom))
+                    dx_px = tx - _touch_x_prev
+                    dy_px = ty - _touch_y_prev
+                    # Pan: keo PHAI -> map dich chuyen ve DONG (lon tang)
+                    #      keo LEN  -> map dich chuyen ve NAM  (lat giam)
+                    _pan_lon -= dx_px * px_scale
+                    _pan_lat += dy_px * px_scale
+                    _pan_mode = True
+                    _touch_x_prev, _touch_y_prev = tx, ty
+
+            elif _touch_x0 is not None:
+                # Nha tay -> xu ly gesture
+                total_move = abs(_touch_x_prev - _touch_x0) + abs(_touch_y_prev - _touch_y0)
+                dt_ms = time.ticks_diff(now_ms, _touch_t0)
+
+                if total_move < 15 and dt_ms < 300:
+                    # TAP (khong vuot)
+                    if time.ticks_diff(now_ms, _touch_last_tap_t) < 450:
+                        # DOUBLE-TAP -> reset GPS follow mode
+                        _pan_lat = 0.0
+                        _pan_lon = 0.0
+                        _pan_mode = False
+                        map_display.show_notification("GPS Follow")
+                    else:
+                        # SINGLE TAP: TRAI = zoom out, PHAI = zoom in
+                        if _touch_x0 < 120:
+                            _map_zoom = max(14, _map_zoom - 1)
+                            map_display.show_notification("- Zoom {}".format(_map_zoom))
+                        else:
+                            _map_zoom = min(19, _map_zoom + 1)
+                            map_display.show_notification("+ Zoom {}".format(_map_zoom))
+                    _touch_last_tap_t = now_ms
+
+                # Reset touch state
+                _touch_x0, _touch_y0 = None, None
+
+
+        # ─── Wake: Vô hiệu hóa ghi âm theo yêu cầu ───
         btn_state = wake_btn.value()
         trigger_recording = False
-
-        if btn_state == 0 and last_btn_state == 1:
-            print("[Wake] Kích hoạt bằng nút nhấn!")
-            trigger_recording = True
-        elif current_state in (STATE_READY, STATE_NAVIGATING):
-            if voice.detect_vad_trigger(threshold_db=4000, check_duration_ms=80):
-                print("[Wake] Kích hoạt VAD!")
-                trigger_recording = True
-
         last_btn_state = btn_state
 
         # ─── Ghi âm & gửi lên AI ───
@@ -477,8 +548,8 @@ def main():
                     # ── (A) Fetch bản đồ Google Maps mỗi 3 giây ──
                     # Center = GPS hiện tại → bản đồ follow user như Google Maps
                     now_secs = time.ticks_diff(now_ms, last_map_fetch_ms)
-                    cur_lat = cloud_data.get('gps_lat') or 0
-                    cur_lon = cloud_data.get('gps_lon') or 0
+                    cur_lat = cloud_data.get('gps_lat') or 10.8541
+                    cur_lon = cloud_data.get('gps_lon') or 106.7878
                     gps_moved = (abs(cur_lat - _last_map_lat) > 0.00005 or
                                  abs(cur_lon - _last_map_lon) > 0.00005)
 
@@ -487,15 +558,42 @@ def main():
                         _last_map_lat = cur_lat
                         _last_map_lon = cur_lon
                         try:
-                            zoom = 17
-                            img_bytes = wifi_server._https_get(
-                                f"/api/map-image?lat={cur_lat}&lon={cur_lon}&zoom={zoom}",
-                                raw=True  # trả bytes chương sập parse JSON
-                            )
-                            if img_bytes and len(img_bytes) > 500:
-                                map_display.update_map_image(img_bytes)
+                            zoom = _map_zoom  # Local zoom (không lấy từ cloud)
+                            # Center bản đồ: GPS + offset pan (nếu đang pan mode)
+                            gps_lat_c = cloud_data.get('gps_lat') or 10.8541
+                            gps_lon_c = cloud_data.get('gps_lon') or 106.7878
+                            if not _pan_mode:  # Follow GPS -> reset offset từ từ
+                                _pan_lat *= 0.5
+                                _pan_lon *= 0.5
+                                if abs(_pan_lat) < 0.00001: _pan_lat = 0.0
+                                if abs(_pan_lon) < 0.00001: _pan_lon = 0.0
+                            map_center_lat = gps_lat_c + _pan_lat
+                            map_center_lon = gps_lon_c + _pan_lon
+                            path = f"/api/map-image?lat={map_center_lat}&lon={map_center_lon}&zoom={zoom}&format=rgb565&gps_lat={gps_lat_c}&gps_lon={gps_lon_c}"
+
+                            # CS toggle tung chunk, KHONG giu CS LOW suot HTTPS
+                            # ILI9341 giu frame buffer position giua cac CS transaction
+                            if map_display.drv:
+                                drv = map_display.drv
+                                import gc; gc.collect()
+                                drv.set_window(0, MAP_Y, 239, MAP_Y + MAP_H - 1)
+
+                                def on_map_data(chunk):
+                                    if chunk:
+                                        drv.dc.value(1)
+                                        drv.cs.value(0)
+                                        drv.spi.write(chunk)
+                                        drv.cs.value(1)
+
+                                ok = wifi_server._https_get_stream(path, on_map_data)
+                                if ok:
+                                    print("[Map] Ban do OK!")
+                                else:
+                                    print("[Map] Loi tai ban do.")
                         except Exception as _me:
-                            print("[Map] Lỗi fetch bản đồ:", _me)
+                            if map_display.drv:
+                                map_display.drv.cs.value(1)
+                            print("[Map] Loi stream ban do:", _me)
 
                     # ── (B) Xi nhan ×3 khi quẹo trong 100m ──
                     turn_dist = cloud_data.get('dist_to_turn')
@@ -531,13 +629,29 @@ def main():
 
         # ─── Reconnect WiFi ───
         if not wifi_server.is_connected:
-            map_display.update_connection_status(False)
-            wifi_server.check_wifi()
+            map_display.update_connection_status(False, False)
+            # Retry nhanh hon: 3 giay khi chua ket noi (thay vi 15 giay)
+            retry_interval = 3000
+            if time.ticks_diff(now_ms, last_wifi_check_ms) >= retry_interval:
+                last_wifi_check_ms = now_ms
+                print("[WiFi] Thu ket noi lai...")
+                ok = wifi_server.check_wifi()
+                if ok:
+                    map_display.show_notification(f"WiFi OK - {wifi_server.ip}")
+                    map_display.update_connection_status(True, False)
+                    if config.USE_CLOUD_SERVER:
+                        wifi_server.start()
+                        wifi_server.on_update     = make_on_update(map_display, journey)
+                        wifi_server.on_alert      = make_on_alert(map_display, voice)
+                        wifi_server.on_voice      = make_on_voice(map_display, voice)
+                        wifi_server.on_stop       = make_on_stop(map_display, journey)
+                        wifi_server.on_show_routes = make_on_show_routes(map_display, wifi_server)
         else:
+            # WiFi da ket noi - cap nhat state nhung KHONG xoa ban do
             if current_state == STATE_IDLE:
                 current_state = STATE_READY
-                map_display.show_screen_state("ready")
-                map_display.update_connection_status(True)
+                # KHONG goi show_screen_state("ready") vi no se xoa ban do!
+                map_display.update_connection_status(True, False)
 
         # ─── Auto-save journey ───
         if journey.is_active:
@@ -549,8 +663,9 @@ def main():
         bat_pct = battery.get_percentage()
         if bat_pct is not None:
             map_display.update_battery(bat_pct)
-            if bat_pct < 10:
-                map_display.show_notification("⚠️ Pin yếu, cần sạc!")
+            # Vô hiệu hóa thông báo "Pin yếu" liên tục tránh đè mất bản đồ
+            # if bat_pct < 10:
+            #     map_display.show_notification("⚠️ Pin yếu, cần sạc!")
 
         # ─── Tắt máy xe → DeepSleep ───
         if not check_power_source() and engine_on:
@@ -558,7 +673,7 @@ def main():
             journey.save()
             map_display.show_notification("Đang lưu hành trình...")
             time.sleep_ms(500)
-            lv.task_handler()
+            map_display.tick()
             machine.deepsleep()
 
         # ─── Đã đến nơi ───
